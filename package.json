@@ -1,12 +1,12 @@
 {
-  "name": "elysia",
-  "version": "1.0.50",
+  "name": "music-lib",
+  "version": "0.0.1",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "bun run --watch src/index.ts"
   },
   "dependencies": {
-    "elysia": "latest"
+    "elysia": "^2.0.0-exp.64"
   },
   "devDependencies": {
     "bun-types": "latest"
