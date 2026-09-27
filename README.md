@@ -1,15 +1,34 @@
-# Elysia with Bun runtime
+# MusicLib v.0
 
-## Getting Started
-To get started with this template, simply paste this command into your terminal:
-```bash
-bun create elysia ./elysia-example
-```
+## Todo
 
-## Development
-To start the development server run:
-```bash
-bun run dev
-```
+### Основное
 
-Open http://localhost:3000/ with your browser to see the result.
+- [ ] Атомарная запись: tmp + fsync + rename, чтобы обрыв не оставил нечитаемый Opus
+- [ ] Дедупликация по SHA-256, чтобы не хранить и не конвертировать дубли
+- [ ] Валидация содержимого, а не только MIME: magic bytes + пробный ffprobe
+- [ ] Проставлять MUSICLIB_ID в теги при записи
+- [ ] Читать теги из аплоада через music-metadata и раскладывать их в БД
+- [ ] Парсить альтернативно информацию из названия загружаемого файла
+- [ ] bun:sqlite без ORM: tracks, albums, artists, playlists + индексы под сортировки
+- [ ] Сканер storage/: пересборка БД, поиск потерянных записей и осиротевших файлов
+- [ ] Стриминг с поддержкой Range, иначе не будет seek и <audio> в браузере
+- [ ] Роуты чтения: список с пагинацией, поиск, фильтры по artist/album/genre
+- [ ] Правка тегов с записью обратно в файл через ffmpeg -c copy
+- [ ] Позиция воспроизведения: resume, счётчик дослушанного, история в append-only play_events
+- [ ] Извлечение обложки из тегов + ресайз через sharp
+- [ ] Кэш альтернативных битрейтов с ленивой генерацией по запросу
+- [ ] Фронтенд: drag&drop с прогрессом, обложки, плейлисты, раздел статистики
+- [ ] bun test на хендлеры и на детект перемотки
+- [ ] Обработка ошибок через .error(...) в едином формате
+- [ ] Graceful shutdown, чтобы не терять недописанные файлы
+
+### Прод
+
+- [ ] Auth, когда переедет на сервер
+- [ ] Rate limits и лимит запросов
+- [ ] Максимальный размер аплоада и таймаут конвертации
+- [ ] pino с request id вместо console.log
+- [ ] CI: tsc --noEmit + bun test
+- [ ] Dockerfile с Bun
+- [ ] Бэкапы: у приватной библиотеки копия ровно одна
