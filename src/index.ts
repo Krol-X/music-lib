@@ -2,6 +2,7 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { Elysia, status, t } from "elysia";
 import { db } from "./db";
+import { analyzeQuality } from "./audio/quality";
 
 const storageDir = "./storage";
 /** Как файл пришёл: для перекодирования в другой битрейт и для обложек. */
@@ -50,8 +51,15 @@ function extOf(name: string): string {
  * диска и пишет .part прямо на диск, поэтому в памяти не оказывается ни байта
  * аудио. Итоговый файл появляется только через rename, так что оборванный
  * ffmpeg не оставит после себя нечитаемый Opus с финальным именем.
+ *
+ * Битрейт приходит снаружи: он выбирается по измеренному диапазону исходника,
+ * а не зашит намертво.
  */
-async function convertToOpus(sourcePath: string, id: string): Promise<string> {
+async function convertToOpus(
+  sourcePath: string,
+  id: string,
+  bitrate: string,
+): Promise<string> {
   const partPath = `${tmpDir}/${id}.opus.part`;
   const target = `${audioDir}/${id}.opus`;
 
@@ -67,7 +75,7 @@ async function convertToOpus(sourcePath: string, id: string): Promise<string> {
       "-i", sourcePath,
       "-map_metadata", "0",
       "-c:a", "libopus",
-      "-b:a", "128k",
+      "-b:a", bitrate,
       "-vbr", "on",
       "-compression_level", "10",
       "-f", "opus",
@@ -117,7 +125,12 @@ const app = new Elysia()
 
         // rename, а не копирование: temp нам уже не нужен.
         await rename(uploadPath, originalPath);
-        const opus = await convertToOpus(originalPath, id);
+
+        // Разбор исходника идёт до конвертации: результат решает, какой
+        // битрейт вообще имеет смысл. analyzeQuality не бросает исключений —
+        // при неудаче просто вернётся 160k.
+        const quality = await analyzeQuality(originalPath);
+        const opus = await convertToOpus(originalPath, id, quality.opusBitrate);
 
         // Повторная загрузка того же файла не должна падать: onConflict игнорирует
         // дубль по первичному ключу, а нам важно лишь, что он был.
@@ -128,6 +141,13 @@ const app = new Elysia()
             ext,
             size_bytes: sizeBytes,
             opus_path: opus,
+            bitrate_kbps: quality.bitrateKbps,
+            vbr: quality.vbr,
+            vbr_method: quality.vbrMethod,
+            encoder: quality.encoder,
+            duration_sec: quality.durationSec === null ? null : Math.round(quality.durationSec),
+            cutoff_hz: quality.cutoffHz,
+            opus_bitrate: quality.opusBitrate,
           })
           .onConflict("id")
           .ignore()
@@ -139,6 +159,16 @@ const app = new Elysia()
           existed: insertedId === undefined,
           filename: file.name,
           opus,
+          quality: {
+            sourceBitrateKbps: quality.bitrateKbps,
+            vbr: quality.vbr,
+            vbrMethod: quality.vbrMethod,
+            encoder: quality.encoder,
+            durationSec: quality.durationSec,
+            cutoffHz: quality.cutoffHz,
+            opusBitrate: quality.opusBitrate,
+            reason: quality.reason,
+          },
         };
       } finally {
         await rm(uploadPath, { force: true });
