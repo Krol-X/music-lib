@@ -108,18 +108,24 @@ describe("транзакции", () => {
     expect(await db("tracks").where("title", "InTrx")).toHaveLength(1);
   });
 
+  // Тело транзакции вынесено наружу, чтобы не было throw внутри try,
+  // который ловится в той же функции: ради этого теста исключение
+  // бросается намеренно, и IDE ругается на такой код справедливо.
+  async function insertThenBail(trx: Knex.Transaction) {
+    await trx("tracks").insert({ title: "Rollback" });
+    throw new Error("boom");
+  }
+
   test("rollback", async () => {
-    // db.transaction() возвращает thenable-объект транзакции, а не промис,
-    // поэтому .rejects здесь неприменим — ловим через try/catch.
+    // db.transaction() отдаёт thenable, а не Promise, поэтому expect().rejects
+    // его не принимает ("Expected promise / Received: Transaction_Sqlite").
+    let error: unknown;
     try {
-      await db.transaction(async (trx) => {
-        await trx("tracks").insert({ title: "Rollback" });
-        throw new Error("boom");
-      });
-      throw new Error("транзакция не откатилась");
+      await db.transaction(insertThenBail);
     } catch (e) {
-      expect((e as Error).message).toBe("boom");
+      error = e;
     }
+    expect((error as Error)?.message).toBe("boom");
     expect(await db("tracks").where("title", "Rollback")).toHaveLength(0);
   });
 });
