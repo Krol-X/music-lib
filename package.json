@@ -2,15 +2,15 @@
   "name": "music-lib",
   "version": "0.0.1",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "bun test",
     "dev": "bun run --watch src/index.ts"
   },
   "dependencies": {
     "elysia": "^2.0.0-exp.64",
+    "knex": "^3.3.0",
     "music-metadata": "^11.16.1"
   },
   "devDependencies": {
     "bun-types": "latest"
-  },
-  "module": "src/index.js"
+  }
 }

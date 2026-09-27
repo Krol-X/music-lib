@@ -42,3 +42,9 @@ package-lock.json
 **/*.bun
 
 .idea
+
+# локальная база
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
