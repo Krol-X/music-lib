@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { Knex } from "knex";
 import { bunKnex, loadExtension } from "./bun-sqlite3.js";
 import { createDb } from "./index.js";
+import { sqliteVecPath } from "./sqlite-vec-path";
 
 let dir: string;
 let db: Knex;
@@ -192,9 +193,13 @@ describe("типы значений", () => {
 });
 
 describe("нативные расширения", () => {
-  const extPath = process.env.SQLITE_VEC_PATH;
+  const extPath = sqliteVecPath();
 
-  test.skipIf(!extPath)("sqlite-vec доступен после loadExtension", async () => {
+  // Раньше здесь стоял skipIf, и тест тихо исчезал, если никто не задал
+  // SQLITE_VEC_PATH. Расширение теперь ставится пакетом, поэтому отсутствие
+  // бинаря — это поломка окружения, и о ней надо узнавать, а не молчать.
+  test("sqlite-vec доступен после loadExtension", async () => {
+    expect(extPath, "расширение sqlite-vec не найдено, поставь зависимость sqlite-vec").not.toBeNull();
     const local = await createDb({ connection: { filename: join(dir, "vec.sqlite") } });
     await loadExtension(local, extPath!);
     await local.raw("CREATE VIRTUAL TABLE emb USING vec0(id INTEGER PRIMARY KEY, v FLOAT[4])");
