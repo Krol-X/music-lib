@@ -513,6 +513,24 @@ BarWidget {
           opacity: enabled ? 1.0 : 0.4
           onClicked: if (root.mediaService) root.mediaService.runAction("next", false, root.mediaService.playerKey(root.activePlayer))
         }
+
+        // Заливка треков: иконка без подписи, всплывает подсказка.
+        // Открывает zenity-диалог и цепочку curl-заливок; перед диалогом
+        // закрывает попап (grab держал бы диалог под виджетом).
+        Button {
+          iconText: "󰐕"
+          tooltipText: "залить треки в библиотеку"
+          foreground: root.bar.foreground
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY
+          enabled: !root.uploadBusy
+          opacity: enabled ? 1.0 : 0.4
+          onClicked: {
+            editStatus = ""
+            uploadStatus = ""
+            root.uploadPick()
+          }
+        }
       }
 
       // ── перемотка ─────────────────────────────────────────────────────────
@@ -627,42 +645,21 @@ BarWidget {
       // «next» после выбора продолжает идти по этому же списку. Секция видна
       // только когда активный плеер — мост (рубеж по имени на шине).
       // ── библиотечная строка: заливка через zenity; статус операции рядом ──
-      Row {
-        visible: root.isOurPlayer
-        height: Style.space(30)
+      // Статусы заливки и правки, когда форма редактирования закрыта —
+      // единственная строка живого отчёта CRUD в попапе.
+      Text {
+        visible: root.isOurPlayer && root.editingTrack === null
+          && (root.uploadStatus !== "" || root.editStatus !== "")
         width: parent.width
-        spacing: Style.space(6)
-
-        Button {
-          height: Style.space(30)
-          iconText: "󰐕"
-          text: "залить"
-          foreground: root.bar.foreground
-          enabled: !root.uploadBusy
-          opacity: enabled ? 1.0 : 0.5
-          onClicked: {
-            editStatus = ""
-            uploadStatus = ""
-            root.uploadPick()
-          }
-        }
-
-        Text {
-          width: parent.width - Style.space(90)
-          height: Style.space(30)
-          verticalAlignment: Text.AlignVCenter
-          textFormat: Text.PlainText
-          elide: Text.ElideRight
-          // Пока правки нет на экране — показываем состантравление заливки,
-          // при открытой форме это место занято формой.
-          text: root.uploadBusy || root.uploadStatus !== "" ? root.uploadStatus
-            : (root.editingTrack === null && root.editStatus !== "" ? root.editStatus : "")
-          color: root.editError && root.editStatus !== "" && root.uploadQueue.length === 0
-            ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.4)
-          font.family: root.bar.fontFamily
-          font.pixelSize: Style.font.caption
-          visible: root.editingTrack === null
-        }
+        height: Style.space(26)
+        verticalAlignment: Text.AlignVCenter
+        textFormat: Text.PlainText
+        elide: Text.ElideRight
+        text: root.uploadStatus !== "" ? root.uploadStatus : root.editStatus
+        color: root.editError && root.uploadStatus === ""
+          ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.4)
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.caption
       }
 
       // Поиск и сортировка — локальные, по уже скачанному списку: в попапе
