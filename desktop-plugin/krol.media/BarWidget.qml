@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import qs.Ui
 import qs.Commons
 import qs.Commons as Commons
@@ -98,6 +99,148 @@ BarWidget {
     // Высоты считаем арифметикой: строки одного роста плюс отступ в колонке.
     const target = idx * (Style.space(38) + Style.space(1)) + Style.space(19) - trackFlick.height * 0.5
     trackFlick.contentY = Math.max(0, Math.min(target, Math.max(0, trackFlick.contentHeight - trackFlick.height)))
+  }
+
+  // ── CRUD библиотеки из попапа ─────────────────────────────────────────────
+  //
+  // Заливка (curl-процесс по цепочке путей из zenity), правка метаданных
+  // (PATCH) и удаление (DELETE в два подтверждения). Правка заменяет поиск
+  // и список в попапе на форму; роль моста — только очередь, ей CRUD не мешает.
+  property var editingTrack: null // копия записи из library
+  property bool confirmDelete: false
+  property string editStatus: ""
+  property bool editError: false
+
+  property bool uploadBusy: false
+  property var uploadQueue: []
+  property int uploadOk: 0
+  property int uploadFail: 0
+  property string uploadStatus: ""
+
+  Process {
+    id: pickProc
+    stdout: StdioCollector { onStreamFinished: root.uploadPicked(text) }
+  }
+
+  function uploadPick() {
+    pickProc.command = ["zenity", "--file-selection", "--multiple",
+      "--title", "Залить в библиотеку",
+      "--file-filter", "Аудио | *.mp3 *.flac *.wav *.ogg *.mka",
+      "--file-filter", "Все файлы | *"]
+    pickProc.running = true
+  }
+
+  function uploadPicked(text) {
+    const paths = String(text).trim().split("\n").filter(Boolean)
+    if (paths.length === 0) return // отмена диалога
+    uploadQueue = paths
+    uploadOk = 0
+    uploadFail = 0
+    uploadBusy = true
+    uploadStatus = "заливаю (1/" + paths.length + ")…"
+    uploadNext()
+  }
+
+  Process {
+    id: uploadProc
+    stdout: StdioCollector { onStreamFinished: root.uploadFinished(text) }
+  }
+
+  function uploadNext() {
+    if (uploadQueue.length === 0) {
+      uploadBusy = false
+      loadLibrary()
+      uploadStatus = uploadFail === 0
+        ? "готово: " + uploadOk + " тр." + (uploadOk > 1 ? "ов" : "")
+        : uploadOk + " ок, " + uploadFail + " с ошибкой"
+      return
+    }
+    uploadStatus = "заливаю (" + (uploadOk + uploadFail + 1) + "/" + (uploadOk + uploadFail + uploadQueue.length) + ")…"
+    uploadProc.command = ["curl", "-sS", "-F", "file=@" + uploadQueue[0], server + "/audio/upload"]
+    uploadQueue = uploadQueue.slice(1)
+    uploadProc.running = true
+  }
+
+  function uploadFinished(text) {
+    let ok = false
+    let msg = "сервер не ответил"
+    try {
+      const r = JSON.parse(String(text))
+      if (r && (r.success || r.existed)) { ok = true; uploadOk++ }
+      else msg = r.error || "сервер отказал"
+    } catch (e) {
+      msg = "не разобрал ответ сервера: " + String(text).slice(0, 60)
+    }
+    if (!ok) { uploadFail++; editStatus = msg; editError = true }
+    uploadNext()
+  }
+
+  function patchTrack(id, payload) {
+    editStatus = "сохраняю…"
+    editError = false
+    const xhr = new XMLHttpRequest()
+    xhr.open("PATCH", root.server + "/tracks/" + id)
+    xhr.setRequestHeader("Content-Type", "application/json")
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== 4) return
+      if (xhr.status === 200) {
+        editingTrack = null
+        editStatus = ""
+        loadLibrary()
+      } else {
+        editError = true
+        try { editStatus = JSON.parse(xhr.responseText).error || ("ошибка " + xhr.status) }
+        catch (e) { editStatus = "ошибка " + xhr.status }
+      }
+    }
+    xhr.send(JSON.stringify(payload))
+  }
+
+  function saveEdit() {
+    const t = editingTrack
+    if (!t) return
+    patchTrack(t.id, {
+      title: editTitle.text,
+      artist: editArtist.text,
+      album: editAlbum.text,
+      genre: editGenre.text,
+    })
+  }
+
+  function deleteTrack() {
+    const t = editingTrack
+    if (!t) return
+    if (!confirmDelete) {
+      confirmDelete = true
+      editError = true
+      editStatus = "трек и файлы сотрутся безвозвратно — нажми ещё раз для подтверждения"
+      return
+    }
+    confirmDelete = false
+    editError = false
+    editStatus = "удаляю…"
+    const xhr = new XMLHttpRequest()
+    xhr.open("DELETE", root.server + "/tracks/" + t.id)
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState !== 4) return
+      if (xhr.status === 200 || xhr.status === 404) {
+        editingTrack = null
+        editStatus = ""
+        loadLibrary()
+      } else {
+        editError = true
+        try { editStatus = JSON.parse(xhr.responseText).error || ("ошибка " + xhr.status) }
+        catch (e) { editStatus = "ошибка " + xhr.status }
+      }
+    }
+    xhr.send()
+  }
+
+  function openEditor(track) {
+    editingTrack = Object.assign({}, track) // копия: не мутируем библиотечную
+    confirmDelete = false
+    editStatus = ""
+    editError = false
   }
 
   function loadLibrary() {
@@ -468,11 +611,50 @@ BarWidget {
       // Список в том же порядке, что и очередь моста (sort=album), поэтому
       // «next» после выбора продолжает идти по этому же списку. Секция видна
       // только когда активный плеер — мост (рубеж по имени на шине).
+      // ── библиотечная строка: заливка через zenity; статус операции рядом ──
+      Row {
+        visible: root.isOurPlayer
+        height: Style.space(30)
+        width: parent.width
+        spacing: Style.space(6)
+
+        Button {
+          height: Style.space(30)
+          iconText: "󰐕"
+          text: "залить"
+          foreground: root.bar.foreground
+          enabled: !root.uploadBusy
+          opacity: enabled ? 1.0 : 0.5
+          onClicked: {
+            editStatus = ""
+            uploadStatus = ""
+            root.uploadPick()
+          }
+        }
+
+        Text {
+          width: parent.width - Style.space(90)
+          height: Style.space(30)
+          verticalAlignment: Text.AlignVCenter
+          textFormat: Text.PlainText
+          elide: Text.ElideRight
+          // Пока правки нет на экране — показываем состантравление заливки,
+          // при открытой форме это место занято формой.
+          text: root.uploadBusy || root.uploadStatus !== "" ? root.uploadStatus
+            : (root.editingTrack === null && root.editStatus !== "" ? root.editStatus : "")
+          color: root.editError && root.editStatus !== "" && root.uploadQueue.length === 0
+            ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.4)
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+          visible: root.editingTrack === null
+        }
+      }
+
       // Поиск и сортировка — локальные, по уже скачанному списку: в попапе
       // мгновенный отклик важнее свежести данных, список обновится при
       // следующем открытии.
       Row {
-        visible: root.isOurPlayer && root.library.length > 0
+        visible: root.isOurPlayer && root.library.length > 0 && root.editingTrack === null
         height: Style.space(30)
         width: parent.width
         spacing: Style.space(6)
@@ -497,7 +679,7 @@ BarWidget {
 
       Flickable {
         id: trackFlick
-        visible: root.isOurPlayer && root.playlist.length > 0
+        visible: root.isOurPlayer && root.playlist.length > 0 && root.editingTrack === null
         width: parent.width
         height: Math.min(trackColumn.implicitHeight, Style.space(300))
         contentHeight: trackColumn.implicitHeight
@@ -588,10 +770,30 @@ BarWidget {
               }
 
               MouseArea {
+                id: rowMouse
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: if (root.activePlayer) root.activePlayer.openUri(root.server + modelData.audioUrl)
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                // Левый — играть сразу (OpenUri), правый — форма правки/удаления.
+                onClicked: function(mouse) {
+                  if (!root.activePlayer) return
+                  if (mouse.button === Qt.RightButton) root.openEditor(modelData)
+                  else root.activePlayer.openUri(root.server + modelData.audioUrl)
+                }
+              }
+
+              Text {
+                // Карандаш подсказывает, что правый клик открывает правку.
+                visible: rowMouse.containsMouse
+                anchors.right: parent.right
+                anchors.rightMargin: parent.pad + Style.space(2)
+                anchors.verticalCenter: parent.verticalCenter
+                text: "󰏫"
+                textFormat: Text.PlainText
+                color: Qt.darker(root.bar.foreground, 1.5)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.body
               }
             }
           }
@@ -599,7 +801,7 @@ BarWidget {
       }
 
       Text {
-        visible: root.isOurPlayer && root.library.length > 0 && root.playlist.length === 0
+        visible: root.isOurPlayer && root.library.length > 0 && root.playlist.length === 0 && root.editingTrack === null
         width: parent.width
         textFormat: Text.PlainText
         text: "ничего не найдено"
@@ -607,6 +809,113 @@ BarWidget {
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.caption
         horizontalAlignment: Text.AlignHCenter
+      }
+
+      // ── форма правки трека: PATCH и DELETE с подтверждением ───────────────
+      Column {
+        visible: root.editingTrack !== null
+        width: parent.width
+        spacing: Style.space(6)
+
+        Row {
+          width: parent.width
+          height: Style.space(26)
+          spacing: Style.space(6)
+
+          Button {
+            height: Style.space(26)
+            iconText: "󰁰"
+            foreground: root.bar.foreground
+            onClicked: {
+              editingTrack = null
+              confirmDelete = false
+              editStatus = ""
+              editError = false
+            }
+          }
+
+          Text {
+            height: Style.space(26)
+            verticalAlignment: Text.AlignVCenter
+            textFormat: Text.PlainText
+            text: "правка: " + (root.editingTrack ? (root.editingTrack.title || root.editingTrack.filename) : "")
+            elide: Text.ElideRight
+            width: parent.width - Style.space(40)
+            color: root.bar.foreground
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.bodySmall
+          }
+        }
+
+        TextField {
+          id: editTitle
+          width: parent.width
+          height: Style.space(28)
+          placeholderText: "название"
+          foreground: root.bar.foreground
+          font.family: root.bar.fontFamily
+          text: root.editingTrack ? (root.editingTrack.title || "") : ""
+        }
+
+        TextField {
+          id: editArtist
+          width: parent.width
+          height: Style.space(28)
+          placeholderText: "исполнитель (пусто = убрать)"
+          foreground: root.bar.foreground
+          font.family: root.bar.fontFamily
+          text: root.editingTrack ? (root.editingTrack.artist || "") : ""
+        }
+
+        TextField {
+          id: editAlbum
+          width: parent.width
+          height: Style.space(28)
+          placeholderText: "альбом (пусто = убрать)"
+          foreground: root.bar.foreground
+          font.family: root.bar.fontFamily
+          text: root.editingTrack ? (root.editingTrack.album || "") : ""
+        }
+
+        TextField {
+          id: editGenre
+          width: parent.width
+          height: Style.space(28)
+          placeholderText: "жанр (пусто = убрать)"
+          foreground: root.bar.foreground
+          font.family: root.bar.fontFamily
+          text: root.editingTrack ? (root.editingTrack.genre || "") : ""
+        }
+
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Button {
+            height: Style.space(28)
+            text: "сохранить"
+            foreground: root.bar.foreground
+            onClicked: root.saveEdit()
+          }
+
+          Button {
+            height: Style.space(28)
+            text: root.confirmDelete ? "точно удалить?" : "удалить"
+            foreground: root.confirmDelete ? Commons.Color.accent : root.bar.foreground
+            onClicked: root.deleteTrack()
+          }
+        }
+
+        Text {
+          visible: root.editStatus !== ""
+          width: parent.width
+          textFormat: Text.PlainText
+          text: root.editStatus
+          elide: Text.ElideRight
+          color: root.editError ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.4)
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+        }
       }
 
       PanelSeparator {
