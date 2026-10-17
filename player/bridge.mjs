@@ -306,7 +306,21 @@ async function playById(id) {
 mpv.onEvent(function onEventMsg(msg) {
   switch (msg.event) {
     case "property-change": {
-      if (msg.name === "playback-time") state.positionSec = msg.data ?? 0;
+      if (msg.name === "playback-time") {
+        const next = msg.data ?? 0;
+        // Обычный тик — доли секунды; скачок больше порога — это seek
+        // (наш через Seek/SetPosition или resume-offset на старте). По спеке
+        // клиенту о нём сообщаем сигналом Seeked: quickshell считает позицию
+        // сам и без него продолжает тикать от старого места.
+        if (state.loaded && Math.abs(next - state.positionSec) > 1.5) {
+          try {
+            iface?.Seeked(Math.round(next * 1e6));
+          } catch (err) {
+            console.error("Seeked не ушёл:", err);
+          }
+        }
+        state.positionSec = next;
+      }
       if (msg.name === "duration") state.durationSec = msg.data ?? null;
       // Свёрка: mpv может сообщить о паузе, чего мы не командовали.
       if (msg.name === "pause") setPaused(msg.data === true);
@@ -428,10 +442,14 @@ class PlayerInterface extends Interface {
   Previous() { previous(); }
 
   /** offsetUs — относительный сдвиг в микросекундах, может быть отрицательным. */
+  /** Тело сигнала Seeked: configureMembers оборачивает его в отправку по шине. */
+  Seeked(positionUs) { return positionUs; }
+
   Seek(offsetUs) {
+    // Была отладка: quickshell шлёт offset в MPRIS-единицах (мкс), как и
+    // положено по спеке — конверсия не нужна, только /1e6 для mpv.
     mpv.command(["seek", Number(offsetUs) / 1e6, "relative"]);
   }
-
   /** TrackId не совпал с текущим — спека говорит игнорировать. */
   SetPosition(trackId, positionUsArg) {
     const item = state.tracks[state.index];

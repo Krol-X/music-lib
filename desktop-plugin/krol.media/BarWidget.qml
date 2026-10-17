@@ -99,7 +99,22 @@ BarWidget {
   }
 
   Component.onCompleted: loadLibrary()
-  onPopupOpenChanged: if (popupOpen) loadLibrary()
+  onPopupOpenChanged: if (popupOpen) {
+    loadLibrary()
+    // Поле поиска сразу в фокусе: попап открыт клавиатурно-занятым grab'ом,
+    // первый клик по нему иногда теряется — не заставляю жалиться дважды.
+    if (filterField) filterField.forceActiveFocus()
+  }
+
+  // Quickshell не перетикает position сам: по докам заставляем его сигнал
+  // руками, пока играет и попап открыт (иначе слайдер и время замирают
+  // до следующего скачка позиции).
+  Timer {
+    interval: 500
+    repeat: true
+    running: root.popupOpen && root.activePlayer !== null && root.activePlayer.isPlaying && root.activePlayer.canSeek
+    onTriggered: if (root.activePlayer) root.activePlayer.positionChanged()
+  }
 
   visible: hasMedia
   implicitWidth: hasMedia ? row.implicitWidth + Style.space(14) : 0
@@ -340,10 +355,9 @@ BarWidget {
           opacity: enabled ? 1.0 : 0.4
           value: root.activePlayer ? (root.activePlayer.position ?? 0) : 0
 
+          // Писабельный position = наш SetPosition (абсолютный, gated по trackid).
           onReleased: function(v) {
-            if (!root.activePlayer) return
-            const delta = v - (root.activePlayer.position ?? 0)
-            if (Math.abs(delta) > 0.9) root.activePlayer.seek(delta)
+            if (root.activePlayer && root.activePlayer.canSeek) root.activePlayer.position = v
           }
         }
 
