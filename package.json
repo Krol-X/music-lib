@@ -12,7 +12,7 @@
     "music-metadata": "^11.16.1"
   },
   "devDependencies": {
-    "bun-types": "latest",
+    "bun-types": "^1.4.3",
     "sqlite-vec": "^0.1.9"
   }
 }
