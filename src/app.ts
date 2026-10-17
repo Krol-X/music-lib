@@ -15,18 +15,22 @@ import { extractCover, coverMime } from "./audio/cover";
 import { resolveTags, type MetaSource } from "./audio/filename-tags";
 import { listTracks, patchToColumns, trackToJson, type PatchBody } from "./tracks";
 
-const storageDir = process.env.MUSICLIB_STORAGE ?? "./storage";
+/**
+ * Каталоги вычисляются на вызов: тесты задают MUSICLIB_STORAGE в
+ * beforeAll, уже после импорта модуля, и ничего не рвётся.
+ */
+const storageDir = () => process.env.MUSICLIB_STORAGE ?? "./storage";
 /** Как файл пришёл: для перекодирования в другой битрейт и для обложек. */
-const originalDir = `${storageDir}/original`;
+const originalDir = () => `${storageDir()}/original`;
 /** Что мы отдаём на прослушивание. */
-const audioDir = `${storageDir}/audio`;
+const audioDir = () => `${storageDir()}/audio`;
 /** Обложки, извлечённые из тегов. */
-const coverDir = `${storageDir}/cover`;
+const coverDir = () => `${storageDir()}/cover`;
 /** Промежуточное: сюда ffmpeg пишет .part, отсюда rename в audio/. */
-const tmpDir = `${storageDir}/tmp`;
+const tmpDir = () => `${storageDir()}/tmp`;
 
 export async function ensureDirs() {
-  for (const dir of [originalDir, audioDir, coverDir, tmpDir]) {
+  for (const dir of [originalDir(), audioDir(), coverDir(), tmpDir()]) {
     await mkdir(dir, { recursive: true });
   }
 }
@@ -36,8 +40,8 @@ export async function ensureDirs() {
  * если процесс упал посреди конвертации, .part-файлы уже никому не нужны.
  */
 export async function sweepTmp() {
-  await rm(tmpDir, { recursive: true, force: true });
-  await mkdir(tmpDir, { recursive: true });
+  await rm(tmpDir(), { recursive: true, force: true });
+  await mkdir(tmpDir(), { recursive: true });
 }
 
 /**
@@ -203,8 +207,8 @@ interface UploadResult {
  */
 async function runUploadPipeline(db: Knex, file: File): Promise<UploadResult> {
   const ext = extOf(file.name);
-  const uploadPath = `${tmpDir}/${crypto.randomUUID()}.upload`;
-  const partPath = `${tmpDir}/${crypto.randomUUID()}.opus.part`;
+  const uploadPath = `${tmpDir()}/${crypto.randomUUID()}.upload`;
+  const partPath = `${tmpDir()}/${crypto.randomUUID()}.opus.part`;
 
   try {
     // Сначала на диск, дальше весь пайплайн читает файл, а не память.
@@ -242,8 +246,8 @@ async function runUploadPipeline(db: Knex, file: File): Promise<UploadResult> {
     const conversion = await checkConversion(uploadPath, partPath, input);
 
     // Всё проверено — только теперь трогаем постоянное хранилище.
-    const originalPath = `${originalDir}/${id}.${ext}`;
-    const opus = `${audioDir}/${id}.opus`;
+    const originalPath = `${originalDir()}/${id}.${ext}`;
+    const opus = `${audioDir()}/${id}.opus`;
     await rename(uploadPath, originalPath);
     await rename(partPath, opus);
 
@@ -251,8 +255,8 @@ async function runUploadPipeline(db: Knex, file: File): Promise<UploadResult> {
     // треку, звук уже проверен и лежит на месте.
     let coverPath: string | null = null;
     if (cover) {
-      await mkdir(coverDir, { recursive: true });
-      coverPath = `${coverDir}/${id}.${cover.ext}`;
+      await mkdir(coverDir(), { recursive: true });
+      coverPath = `${coverDir()}/${id}.${cover.ext}`;
       await Bun.write(coverPath, cover.data);
     }
 
@@ -398,6 +402,27 @@ export function buildApp(db: Knex) {
         return trackToJson(updated!);
       },
     )
+    .delete("/tracks/:id", async ({ params }) => {
+      const row = await db("tracks").where("id", params.id).first();
+      if (!row) return errorResponse(404, "трек не найден");
+
+      // Сначала строка: после ответа клиенту трек не должен числиться в
+      // библиотеке ни одним запросом, а с файлами, если что-то оборвалось
+      // посреди rm, разберётся сканер storage/ (осиротевшие файлы — его
+      // основная работа). В обратном порядке отказ unlink оставил бы трек,
+      // указывающий в никуда.
+      await db("tracks").where("id", params.id).del();
+
+      const paths = [
+        // Оригинал пути в БД не хранит — он собирается так же, как при записи.
+        `${originalDir()}/${params.id}.${row.ext}`,
+        row.opus_path,
+        row.cover_path,
+      ].filter((p): p is string => typeof p === "string");
+      await Promise.all(paths.map((p) => rm(p, { force: true })));
+
+      return { success: true, id: params.id };
+    })
     .get("/audio/:id", ({ params, request }) => serveAudio(db, params.id, request, true))
     .head("/audio/:id", ({ params, request }) => serveAudio(db, params.id, request, false))
     .get("/cover/:id", ({ params }) => serveCover(db, params.id, true))

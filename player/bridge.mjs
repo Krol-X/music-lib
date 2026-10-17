@@ -202,14 +202,48 @@ async function transition(index, pause) {
   changes({ Metadata: metadata, PlaybackStatus: playbackStatus() });
 }
 
-function next(auto = false) {
-  const i = (state.index + 1) % state.tracks.length;
-  transition(i, /* pause */ !auto && !state.playing);
+/**
+ * Обновление очереди уже во время работы: новозалитый трек появлялся бы
+ * только после рестарта юнита. Одна попытка без ретраев — сервер мог
+ * перезапуститься или ответить временной ошибкой; провал молчит, играет
+ * то, что есть. Текущий трек ищется по id: если его удалили, позиция
+ * сбрасывается на голову списка.
+ */
+async function refreshQueue() {
+  const current = state.tracks[state.index] ?? null;
+  const before = state.tracks.length;
+  try {
+    const res = await fetch(`${SERVER}/tracks?limit=200&sort=created&order=desc`);
+    if (!res.ok) return;
+    const body = await res.json();
+    const tracks = body.items ?? [];
+    if (tracks.length === 0) return;
+    state.tracks = tracks;
+    const i = current ? state.tracks.findIndex((t) => t.id === current.id) : -1;
+    state.index = i >= 0 ? i : 0;
+  } catch {
+    return;
+  }
+
+  if (state.tracks.length !== before) {
+    changes({ CanGoNext: state.tracks.length > 1, CanGoPrevious: state.tracks.length > 1 });
+  }
 }
 
-function previous() {
+async function next(auto = false) {
+  // Каждая смена трека обновляет очередь: залитый трек не требует
+  // рестарта юнита, удалённый исчезает из очереди сам.
+  await refreshQueue();
+  if (state.tracks.length === 0) return;
+  const i = (state.index + 1) % state.tracks.length;
+  await transition(i, !auto && !state.playing);
+}
+
+async function previous() {
+  await refreshQueue();
+  if (state.tracks.length === 0) return;
   const i = (state.index + state.tracks.length - 1) % state.tracks.length;
-  transition(i, !state.playing);
+  await transition(i, !state.playing);
 }
 
 // ── события mpv = факты о воспроизведении ───────────────────────────────────

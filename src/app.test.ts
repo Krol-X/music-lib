@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Knex } from "knex";
@@ -144,6 +144,9 @@ async function seed() {
 
 beforeAll(async () => {
   dir = await mkdtemp(join(tmpdir(), "musiclib-app-"));
+  // app.ts читает env на вызов: тест на DELETE проверяет и реальные пути
+  // в "хранилище", поэтому скормим ему tmp-каталог.
+  process.env.MUSICLIB_STORAGE = dir;
   db = await createDb({ connection: { filename: join(dir, "test.sqlite") } });
   await db.migrate.latest();
   await seed();
@@ -173,6 +176,11 @@ async function patchJson(
       body: JSON.stringify(body),
     }),
   );
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+async function deleteJson(id: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await app.handle(new Request(`http://localhost/tracks/${id}`, { method: "DELETE" }));
   return { status: res.status, body: (await res.json()) as Record<string, unknown> };
 }
 
@@ -450,5 +458,65 @@ describe("миграция cover_path", () => {
   test("колонка есть после migrate.latest", async () => {
     const info = (await db.raw("pragma table_info(tracks)")) as Array<{ name: string }>;
     expect(info.map((c) => c.name)).toContain("cover_path");
+  });
+});
+
+describe("DELETE /tracks/:id", () => {
+  test("существующий трек: строка удалена, файлы стёрты", async () => {
+    // Настоящие файлы на диске — DELETE отвечает и за них. Пути строит
+    // сам сервер: original/{id}.{ext}, opus_path и cover_path из БД.
+    const originalPath = join(dir, "original", "track-2.mp3");
+    const opusPath = join(dir, "track-2.opus");
+    const coverPath = join(dir, "track-2-cover.jpg");
+    await mkdir(join(dir, "original"), { recursive: true });
+    await writeFile(join(dir, "original", "track-2.mp3"), "original-bytes");
+    await writeFile(opusPath, "opus-bytes");
+    await writeFile(coverPath, "cover-bytes");
+    await db("tracks").where("id", "track-2").update({
+      opus_path: opusPath,
+      cover_path: coverPath,
+      ext: "mp3",
+    });
+
+    const { status, body } = await deleteJson("track-2");
+    expect(status).toBe(200);
+    expect(body).toEqual({ success: true, id: "track-2" });
+
+    const gone = await app.handle(new Request("http://localhost/tracks/track-2"));
+    expect(gone.status).toBe(404);
+    const { body: after } = await getJson("/tracks");
+    expect(after.total).toBe(FIXTURES.length - 1);
+    expect(ids(after)).not.toContain("track-2");
+    for (const p of [originalPath, opusPath, coverPath]) {
+      expect(await Bun.file(p).exists()).toBe(false);
+    }
+  });
+
+  test("трек без обложки: оригинал и opus стёрты", async () => {
+    const originalPath = join(dir, "original", "track-5.wav");
+    const opusPath = join(dir, "track-5.opus");
+    await writeFile(originalPath, "original-bytes");
+    await writeFile(opusPath, "opus-bytes");
+    await db("tracks").where("id", "track-5").update({
+      ext: "wav",
+      opus_path: opusPath,
+      cover_path: null,
+    });
+
+    const { status } = await deleteJson("track-5");
+    expect(status).toBe(200);
+    expect(await Bun.file(originalPath).exists()).toBe(false);
+    expect(await Bun.file(opusPath).exists()).toBe(false);
+  });
+
+  test("несуществующий трек: 404 в едином формате", async () => {
+    const { status, body } = await deleteJson("нет-такого");
+    expect(status).toBe(404);
+    expect(body.error).toBe("трек не найден");
+  });
+
+  test("удаление не задевает соседей", async () => {
+    const { body } = await getJson("/tracks?sort=created&order=asc");
+    expect(ids(body)).toEqual(["track-3", "track-1", "track-4"]);
   });
 });
