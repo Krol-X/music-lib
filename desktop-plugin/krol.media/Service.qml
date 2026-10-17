@@ -15,7 +15,19 @@ Item {
   property var pendingTrackOsd: null
   property int playSerial: 0
 
-  readonly property var players: Mpris.players ? Mpris.players.values : []
+  // Виджет клонирован для личной библиотеки: активный плеер — всегда наш
+  // мост (org.mpris.MediaPlayer2.musiclib). Чужие MPRIS (браузер и прочие)
+  // отрезаются здесь, на источнике: через это свойство идут и выбор
+  // активного плеера, и sourcePlayers, и OSD, и hasMedia.
+  readonly property var players: {
+    var all = Mpris.players ? Mpris.players.values : []
+    var own = []
+    for (var i = 0; i < all.length; i++) {
+      var p = all[i]
+      if (String(p.dbusName || "").indexOf("musiclib") !== -1) own.push(p)
+    }
+    return own
+  }
   readonly property var nodes: Pipewire.nodes ? Pipewire.nodes.values : []
   readonly property var playbackStreams: {
     var list = []
