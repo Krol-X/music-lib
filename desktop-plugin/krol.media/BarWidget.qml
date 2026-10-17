@@ -821,7 +821,9 @@ BarWidget {
                 MouseArea {
                   id: editPencil
                   anchors.fill: parent
-                  hoverEnabled: true
+                  // Без своего hover-трака: иначе ховер перетекает со строки
+                  // на карандаш и обратно — строка прячет карандаш на его же
+                  // курсоре и тот моргает. Кликам это не мешает.
                   cursorShape: Qt.PointingHandCursor
                   acceptedButtons: Qt.LeftButton | Qt.RightButton
                   onClicked: root.openEditor(modelData)
