@@ -278,8 +278,17 @@ async function next(auto = false) {
   // рестарта юнита, удалённый исчезает из очереди сам.
   await refreshQueue();
   if (state.tracks.length === 0) return;
-  const i = (state.index + 1) % state.tracks.length;
-  await transition(i, !auto && !state.playing);
+  if (state.index + 1 >= state.tracks.length) {
+    if (!auto || state.loop !== "None") {
+      // Playlist крутится по кругу; ручной Next с последнего трека
+      // уводит на первый в любом режиме.
+      await transition(0, !auto && !state.playing);
+    }
+    // None + авто-переход: ничего не грузим — mpv с --keep-open=no сам
+    // уйдёт в idle, штатный обработчик выставит Stopped.
+    return;
+  }
+  await transition(state.index + 1, !auto && !state.playing);
 }
 
 async function previous() {
@@ -352,13 +361,10 @@ mpv.onEvent(function onEventMsg(msg) {
       break;
     case "end-file":
       if (msg.reason === "eof") {
-        if (state.loop === "None") {
-          state.playing = false;
-          changes({ PlaybackStatus: playbackStatus() });
-        } else if (state.loop === "Track") {
+        if (state.loop === "Track") {
           transition(state.index, false); // тот же трек сначала
         } else {
-          next(true); // трек кончился сам
+          next(true); // дальше по очереди; None на последнем — next решит сам
         }
       } else {
         state.loaded = false;
@@ -470,13 +476,13 @@ class PlayerInterface extends Interface {
   Previous() { previous(); }
 
   /** offsetUs — относительный сдвиг в микросекундах, может быть отрицательным. */
-  /** Тело метода SetLoopMode: configureMembers оборачивает в вызов по шине. */
+  /** Тело метода SetLoopMode: configureMembers оборачивает в вызов по шине.
+   * Без return — у метода нет out-аргумента, лишнее тело ответа роняет вызов. */
   SetLoopMode(mode) {
     const m = String(mode);
     if (m !== "None" && m !== "Track" && m !== "Playlist") return;
     state.loop = m;
     changes({ LoopStatus: state.loop });
-    return m;
   }
 
   /** Тело сигнала Seeked: configureMembers оборачивает его в отправку по шине. */

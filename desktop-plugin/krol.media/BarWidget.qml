@@ -1,6 +1,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
+import Quickshell.Services.Mpris
 import qs.Ui
 import qs.Commons
 import qs.Commons as Commons
@@ -484,10 +485,11 @@ BarWidget {
         LayoutMirroring.childrenInherit: true
 
         // Повтор: None → Playlist → Track → None, пишем в loopState моста.
-        // Quickshell loopState писабельный — пошлёт SetLoopMode на мост.
+        // Внимание: loopState в Quickshell — числовой enum MprisLoopState
+        // (None=0, Track=1, Playlist=2), а не строка MPRIS "None"/"Track"/...
         Button {
           iconText: "󰁺"
-          foreground: root.activePlayer && root.activePlayer.loopState !== "None"
+          foreground: root.activePlayer && root.activePlayer.loopState !== MprisLoopState.None
             ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
@@ -495,9 +497,9 @@ BarWidget {
           opacity: enabled ? 1.0 : 0.4
           onClicked: {
             if (!root.activePlayer) return
-            const modes = ["None", "Playlist", "Track"]
-            const i = modes.indexOf(root.activePlayer.loopState)
-            root.activePlayer.loopState = modes[(i + 1) % 3]
+            const cur = root.activePlayer.loopState
+            root.activePlayer.loopState = cur === MprisLoopState.None ? MprisLoopState.Playlist
+              : cur === MprisLoopState.Playlist ? MprisLoopState.Track : MprisLoopState.None
           }
         }
 
