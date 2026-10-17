@@ -322,6 +322,15 @@ mpv.onEvent(function onEventMsg(msg) {
         state.positionSec = next;
       }
       if (msg.name === "duration") state.durationSec = msg.data ?? null;
+      // Громкость меняют не только наши руки (mpv-клавиши, если mpv-окно):
+      // синхронизируем и рапортуем в PropertiesChanged, виджет не отстанет.
+      if (msg.name === "volume") {
+        const pct = Math.min(130, Math.max(0, Math.round(msg.data ?? 100)));
+        if (pct !== state.volume) {
+          state.volume = pct;
+          changes({ Volume: state.volume / 100 });
+        }
+      }
       // Свёрка: mpv может сообщить о паузе, чего мы не командовали.
       if (msg.name === "pause") setPaused(msg.data === true);
       break;
@@ -399,6 +408,9 @@ class PlayerInterface extends Interface {
   set Volume(v) {
     state.volume = Math.min(Math.max(Number(v) * 100, 0), 100);
     mpv.command(["set_property", "volume", state.volume]);
+    // Рапортуем тем же Property: виджет слайдера и MPRIS-клиенты должны
+    // увидеть значение, а не догадываться.
+    changes({ Volume: state.volume / 100 });
   }
   get Rate() { return 1.0; }
   get MinimumRate() { return 1.0; }
@@ -551,7 +563,8 @@ async function superviseMpv() {
     );
 
     await mpv.waitReady();
-    for (const prop of ["playback-time", "pause", "duration"]) {
+    // mpv экспортирует громкость точно как state.volume: проценты 0..100.
+    for (const prop of ["playback-time", "pause", "duration", "volume"]) {
       mpv.command(["observe_property", ++observeId, prop]);
     }
 
