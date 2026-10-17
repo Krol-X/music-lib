@@ -297,8 +297,8 @@ async function playById(id) {
   await refreshQueue();
   const i = state.tracks.findIndex((t) => t.id === id);
   if (i === -1) return;
-  // Клик по треку всегда запускает звук: даже если до этого было Stopped.
-  await transition(i, /* pause */ !state.playing && state.loaded);
+  // Клик по треку в списке всегда включает звук: и из Stopped, и из Paused.
+  await transition(i, false);
 }
 
 // ── события mpv = факты о воспроизведении ───────────────────────────────────

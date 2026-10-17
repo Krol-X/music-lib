@@ -858,7 +858,7 @@ BarWidget {
 
           Button {
             height: Style.space(26)
-            iconText: "󰁰"
+            text: "←  к списку"
             foreground: root.bar.foreground
             onClicked: {
               editingTrack = null
@@ -866,18 +866,6 @@ BarWidget {
               editStatus = ""
               editError = false
             }
-          }
-
-          Text {
-            height: Style.space(26)
-            verticalAlignment: Text.AlignVCenter
-            textFormat: Text.PlainText
-            text: "правка: " + (root.editingTrack ? (root.editingTrack.title || root.editingTrack.filename) : "")
-            elide: Text.ElideRight
-            width: parent.width - Style.space(40)
-            color: root.bar.foreground
-            font.family: root.bar.fontFamily
-            font.pixelSize: Style.font.bodySmall
           }
         }
 
