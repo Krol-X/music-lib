@@ -86,6 +86,7 @@ const state = {
   positionSec: 0,
   durationSec: null,
   volume: 100,    // mpv-шкала 0..100; в MPRIS отдаётся 0..1
+  loop: "Playlist", // None | Track | Playlist; очередь крутится у нас самих
 };
 
 /** interface используется в обработчиках событий раньше своего создания. */
@@ -351,7 +352,14 @@ mpv.onEvent(function onEventMsg(msg) {
       break;
     case "end-file":
       if (msg.reason === "eof") {
-        next(true); // трек кончился сам
+        if (state.loop === "None") {
+          state.playing = false;
+          changes({ PlaybackStatus: playbackStatus() });
+        } else if (state.loop === "Track") {
+          transition(state.index, false); // тот же трек сначала
+        } else {
+          next(true); // трек кончился сам
+        }
       } else {
         state.loaded = false;
         state.durationSec = null;
@@ -399,7 +407,15 @@ class PlayerInterface extends Interface {
   constructor() { super("org.mpris.MediaPlayer2.Player"); }
 
   get PlaybackStatus() { return playbackStatus(); }
-  get LoopStatus() { return "Playlist"; }
+  get LoopStatus() { return state.loop; }
+  set LoopStatus(v) {
+    const mode = String(v);
+    if (mode !== "None" && mode !== "Track" && mode !== "Playlist") return;
+    state.loop = mode;
+    // Track и None — решения нашего end-file обработчика; mpv сам ничего
+    // не зацикливает. Рапортуем значение, чтобы виджет кнопки не болтался.
+    changes({ LoopStatus: state.loop });
+  }
   get Shuffle() { return false; }
   get Metadata() { return metadata; }
   /** Position не шлют через PropertiesChanged: спека запрещает, читайте Get. */
@@ -454,6 +470,15 @@ class PlayerInterface extends Interface {
   Previous() { previous(); }
 
   /** offsetUs — относительный сдвиг в микросекундах, может быть отрицательным. */
+  /** Тело метода SetLoopMode: configureMembers оборачивает в вызов по шине. */
+  SetLoopMode(mode) {
+    const m = String(mode);
+    if (m !== "None" && m !== "Track" && m !== "Playlist") return;
+    state.loop = m;
+    changes({ LoopStatus: state.loop });
+    return m;
+  }
+
   /** Тело сигнала Seeked: configureMembers оборачивает его в отправку по шине. */
   Seeked(positionUs) { return positionUs; }
 
@@ -482,7 +507,7 @@ class PlayerInterface extends Interface {
 PlayerInterface.configureMembers({
   properties: {
     PlaybackStatus: { signature: "s", access: dbus.interface.ACCESS_READ },
-    LoopStatus: { signature: "s", access: dbus.interface.ACCESS_READ },
+    LoopStatus: { signature: "s", access: dbus.interface.ACCESS_READWRITE },
     Shuffle: { signature: "b", access: dbus.interface.ACCESS_READ },
     Metadata: { signature: "a{sv}", access: dbus.interface.ACCESS_READ },
     Position: { signature: "x", access: dbus.interface.ACCESS_READ },
@@ -502,6 +527,7 @@ PlayerInterface.configureMembers({
     Next: {}, Previous: {}, Seek: { inSignature: "x" },
     SetPosition: { inSignature: "ox" },
     OpenUri: { inSignature: "s" },
+    SetLoopMode: { inSignature: "s" },
   },
   signals: { Seeked: { signature: "x" } },
 });
