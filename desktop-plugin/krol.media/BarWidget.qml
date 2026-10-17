@@ -116,6 +116,9 @@ BarWidget {
   property int uploadOk: 0
   property int uploadFail: 0
   property string uploadStatus: ""
+  // Попап временно закрывается перед файловым диалогом (grab держит фокус
+  // у виджета, диалог уходит под него); вернуть после заливки.
+  property bool reopenAfterUpload: false
 
   Process {
     id: pickProc
@@ -123,6 +126,10 @@ BarWidget {
   }
 
   function uploadPick() {
+    // Диалог против grab'а попапа: пока попап держит клавиатуру, zenity
+    // уходит под виджет. Закрываю себя, запоминаю, вернуть после заливки.
+    reopenAfterUpload = popupOpen
+    if (popupOpen) popupOpen = false
     pickProc.command = ["zenity", "--file-selection", "--multiple",
       "--title", "Залить в библиотеку",
       "--file-filter", "Аудио | *.mp3 *.flac *.wav *.ogg *.mka",
@@ -132,7 +139,11 @@ BarWidget {
 
   function uploadPicked(text) {
     const paths = String(text).trim().split("\n").filter(Boolean)
-    if (paths.length === 0) return // отмена диалога
+    if (paths.length === 0) {
+      // Отмена диалога: вернуть виджет как было.
+      if (reopenAfterUpload) { reopenAfterUpload = false; popupOpen = true }
+      return
+    }
     uploadQueue = paths
     uploadOk = 0
     uploadFail = 0
@@ -153,6 +164,10 @@ BarWidget {
       uploadStatus = uploadFail === 0
         ? "готово: " + uploadOk + " тр." + (uploadOk > 1 ? "ов" : "")
         : uploadOk + " ок, " + uploadFail + " с ошибкой"
+      if (reopenAfterUpload) {
+        reopenAfterUpload = false
+        popupOpen = true
+      }
       return
     }
     uploadStatus = "заливаю (" + (uploadOk + uploadFail + 1) + "/" + (uploadOk + uploadFail + uploadQueue.length) + ")…"
@@ -783,17 +798,34 @@ BarWidget {
                 }
               }
 
-              Text {
-                // Карандаш подсказывает, что правый клик открывает правку.
+              Item {
+                // Карандаш — не только подсказка: клик (левый или правый)
+                // открывает форму правки. Живёт над строковым MouseArea,
+                // поэтому перехватывает нажатия себе.
                 visible: rowMouse.containsMouse
                 anchors.right: parent.right
                 anchors.rightMargin: parent.pad + Style.space(2)
                 anchors.verticalCenter: parent.verticalCenter
-                text: "󰏫"
-                textFormat: Text.PlainText
-                color: Qt.darker(root.bar.foreground, 1.5)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.body
+                width: Style.space(26)
+                height: Style.space(30)
+
+                Text {
+                  anchors.centerIn: parent
+                  text: "󰏫"
+                  textFormat: Text.PlainText
+                  color: editPencil.containsMouse ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.5)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+
+                MouseArea {
+                  id: editPencil
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  acceptedButtons: Qt.LeftButton | Qt.RightButton
+                  onClicked: root.openEditor(modelData)
+                }
               }
             }
           }
