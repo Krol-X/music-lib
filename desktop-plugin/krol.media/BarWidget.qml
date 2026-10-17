@@ -498,6 +498,7 @@ BarWidget {
           foreground: root.activePlayer && root.activePlayer.loopState !== MprisLoopState.None
             ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
           tooltipText: "повтор: выкл / весь плейлист / один трек"
+          iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
           enabled: root.activePlayer !== null
@@ -513,6 +514,7 @@ BarWidget {
         Button {
           iconText: "󰒮"
           foreground: root.bar.foreground
+          iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
           enabled: root.activePlayer && root.activePlayer.canGoPrevious
@@ -523,9 +525,9 @@ BarWidget {
         Button {
           iconText: root.activePlayer && root.activePlayer.isPlaying ? "󰏤" : "󰐊"
           foreground: root.bar.foreground
-          horizontalPadding: Style.spacing.panelGap
-          verticalPadding: Style.spacing.controlPaddingY
           iconSize: Style.font.iconLarge
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY
           enabled: root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause)
           opacity: enabled ? 1.0 : 0.4
           onClicked: if (root.mediaService) root.mediaService.runAction("playPause", false, root.mediaService.playerKey(root.activePlayer))
@@ -534,6 +536,7 @@ BarWidget {
         Button {
           iconText: "󰒭"
           foreground: root.bar.foreground
+          iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
           enabled: root.activePlayer && root.activePlayer.canGoNext
@@ -548,6 +551,7 @@ BarWidget {
           iconText: "󰐕"
           tooltipText: "залить треки в библиотеку"
           foreground: root.bar.foreground
+          iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
           enabled: !root.uploadBusy
