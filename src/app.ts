@@ -1,5 +1,7 @@
 import { mkdir, rename, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
+import { dirname } from "node:path";
+import sharp from "sharp";
 import { Elysia, status, t } from "elysia";
 import type { Knex } from "knex";
 import { errorResponse } from "./http";
@@ -160,8 +162,17 @@ async function serveAudio(db: Knex, id: string, request: Request, withBody: bool
  * Отдаёт обложку трека. Range тут не нужен: картинка маленькая, а иммунитетный
  * кэш не включаем по той же причине, что и у аудио — алгоритм извлечения может
  * поменяться, и тот же id получит другие байты.
+ *
+ * ?w=<пиксели> — resized-превьюида: виджет грузит обложки строками плейлиста
+ * (по до 200 штук), и без этой опции каждая тянет полный джепег из тегов.
+ * Кэш на диске в tmp: переживает жизнь процессов, чистится перезагрузкой.
  */
-async function serveCover(db: Knex, id: string, withBody: boolean): Promise<Response> {
+async function serveCover(
+  db: Knex,
+  id: string,
+  request: Request,
+  withBody: boolean,
+): Promise<Response> {
   const track = await db("tracks").where("id", id).first();
   if (!track) return errorResponse(404, "трек не найден");
 
@@ -171,11 +182,53 @@ async function serveCover(db: Knex, id: string, withBody: boolean): Promise<Resp
   const file = Bun.file(coverPath);
   if (!(await file.exists())) return errorResponse(404, "файл обложки отсутствует на диске");
 
+  const raw = parseInt(new URL(request.url).searchParams.get("w") ?? "", 10);
+  const width = Number.isFinite(raw) && raw >= 16 && raw <= 512 ? raw : null;
+  if (width !== null) return coverPreview(coverPath, id, width, withBody);
+
   return new Response(withBody ? file : null, {
     status: 200,
     headers: {
       "Content-Type": coverMime(extOf(coverPath)),
       "Content-Length": String(file.size),
+      "Cache-Control": "private, max-age=3600",
+    },
+  });
+}
+
+/**
+ * Resized-превью обложки: виджет рисует строки плейлиста и мелкий
+ * now-playing (до 200 штук за один попап) и тащить за каждый полный джепег
+ * из тегов расточительно. Кэш на диске в tmp: дёшево, чистится
+ * перезагрузкой, а битый/устаревший файл не страшен — превью по id детерминировано.
+ */
+async function coverPreview(
+  coverPath: string,
+  id: string,
+  width: number,
+  withBody: boolean,
+): Promise<Response> {
+  const source = Bun.file(coverPath);
+  if (!(await source.exists())) return errorResponse(404, "файл обложки отсутствует на диске");
+
+  const cachePath = `${tmpDir()}/cover-cache/${width}/${id}.jpg`;
+  const cached = Bun.file(cachePath);
+  if (!(await cached.exists())) {
+    await mkdir(dirname(cachePath), { recursive: true });
+    await Bun.write(
+      cachePath,
+      await sharp(coverPath).resize(width, width, { fit: "inside" }).jpeg({ quality: 75 }).toBuffer(),
+    );
+  }
+
+  const preview = Bun.file(cachePath);
+  if (!(await preview.exists())) return errorResponse(500, "не собрали превью обложки");
+
+  return new Response(withBody ? preview : null, {
+    status: 200,
+    headers: {
+      "Content-Type": "image/jpeg",
+      "Content-Length": String(preview.size),
       "Cache-Control": "private, max-age=3600",
     },
   });
@@ -425,8 +478,8 @@ export function buildApp(db: Knex) {
     })
     .get("/audio/:id", ({ params, request }) => serveAudio(db, params.id, request, true))
     .head("/audio/:id", ({ params, request }) => serveAudio(db, params.id, request, false))
-    .get("/cover/:id", ({ params }) => serveCover(db, params.id, true))
-    .head("/cover/:id", ({ params }) => serveCover(db, params.id, false))
+    .get("/cover/:id", ({ params, request }) => serveCover(db, params.id, request, true))
+    .head("/cover/:id", ({ params, request }) => serveCover(db, params.id, request, false))
     .post(
       "/audio/upload",
       {

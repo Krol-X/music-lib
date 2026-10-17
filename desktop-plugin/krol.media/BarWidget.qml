@@ -77,7 +77,51 @@ BarWidget {
           || String(a.trackNo || "").localeCompare(String(b.trackNo || ""))
       })
     }
-    return items
+    // Есть где группировать — вешаем на копию записи признак «сдесьgroupId
+    // сменился»: делегат рисует заголовок группы над строкой. Копии, чтобы
+    // не писать __head в библиотечные записи.
+    const keyed = root.sortIndex === 0
+      ? function(t) { return String(t.artist || "") + " — " + String(t.album || "") }
+      : root.sortIndex === 2
+        ? function(t) { return String(t.artist || "") }
+        : null
+    return items.map(function(t, i) {
+      const copy = Object.assign({}, t)
+      if (keyed) {
+        const fresh = i === 0 || keyed(items[i - 1]) !== keyed(t)
+        copy.__head = fresh ? root.headLabelFor(t) : ""
+      }
+      return copy
+    })
+  }
+
+  function headLabelFor(t) {
+    if (sortIndex === 2) return t.artist || "—"
+    return t.artist && t.album ? t.artist + " — " + t.album : (t.album || t.artist || "—")
+  }
+
+  // Мягко показать то, что играется: при открытии попапа прокрутить список
+  // к текущей строке, чтобы она была не где-то за экраном.
+  property bool scrollPending: false
+
+  function scrollToCurrent() {
+    if (!root.activePlayer) return
+    const title = root.activePlayer.trackTitle
+    if (!title) return
+    const artist = root.activePlayer.trackArtist || ""
+    const list = root.playlist
+    let idx = -1
+    for (let i = 0; i < list.length; i++) {
+      if (list[i].title === title && (list[i].artist || "") === artist) { idx = i; break }
+    }
+    if (idx < 0) return
+    // Высоты считаем арифметикой: только два сорта строк и отступ в колонке.
+    let y = 0
+    for (let i = 0; i < idx; i++) {
+      y += (list[i].__head ? Style.space(60) : Style.space(38)) + Style.space(1)
+    }
+    const target = y + Style.space(19) - trackFlick.height * 0.5
+    trackFlick.contentY = Math.max(0, Math.min(target, Math.max(0, trackFlick.contentHeight - trackFlick.height)))
   }
 
   function loadLibrary() {
@@ -101,9 +145,24 @@ BarWidget {
   Component.onCompleted: loadLibrary()
   onPopupOpenChanged: if (popupOpen) {
     loadLibrary()
+    scrollPending = true
+    openScrollTimer.restart()
     // Поле поиска сразу в фокусе: попап открыт клавиатурно-занятым grab'ом,
     // первый клик по нему иногда теряется — не заставляю жалиться дважды.
     if (filterField) filterField.forceActiveFocus()
+  }
+  onLibraryChanged: if (scrollPending) { scrollPending = false; openScrollTimer.restart() }
+
+  // Когда сменился текущий трек при открытом попапе — подтянуть список к нему.
+  readonly property string currentTrackKey: activePlayer
+    ? ((activePlayer.trackTitle || "") + "|" + (activePlayer.trackArtist || ""))
+    : ""
+  onCurrentTrackKeyChanged: if (popupOpen) openScrollTimer.restart()
+  Timer {
+    id: openScrollTimer
+    interval: 120
+    repeat: false
+    onTriggered: root.scrollToCurrent()
   }
 
   // Quickshell не перетикает position сам: по докам заставляем его сигнал
@@ -373,6 +432,55 @@ BarWidget {
         }
       }
 
+      // ── громкость ──────────────────────────────────────────────────────────
+      // MPRIS Volume писабельный: мост гонит его в mpv и сам рапортует
+      // обратное изменение (mpv-клавиши) через PropertiesChanged, так что
+      // слайдер не разболтается от чужих рук.
+      Row {
+        visible: root.activePlayer !== null && root.activePlayer.volumeSupported
+        width: parent.width
+        spacing: Style.space(6)
+
+        Text {
+          width: Style.space(34)
+          height: Style.space(26)
+          text: "󰕾"
+          textFormat: Text.PlainText
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.body
+          verticalAlignment: Text.AlignVCenter
+          horizontalAlignment: Text.AlignRight
+        }
+
+        PanelSlider {
+          height: Style.space(26)
+          width: parent.width - Style.space(86)
+          bar: root.bar
+          minimum: 0
+          maximum: 1
+          step: 0.05
+          enabled: root.activePlayer && root.activePlayer.volumeSupported
+          opacity: enabled ? 1.0 : 0.4
+          value: root.activePlayer ? (root.activePlayer.volume ?? 1) : 1
+
+          onMoved: function(v) {
+            if (root.activePlayer && root.activePlayer.volumeSupported) root.activePlayer.volume = v
+          }
+        }
+
+        Text {
+          width: Style.space(40)
+          height: Style.space(26)
+          text: Math.round((root.activePlayer ? (root.activePlayer.volume ?? 1) : 1) * 100) + "%"
+          textFormat: Text.PlainText
+          color: Qt.darker(root.bar.foreground, 1.4)
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+          verticalAlignment: Text.AlignVCenter
+        }
+      }
+
       PanelSeparator {
         visible: root.isOurPlayer && root.library.length > 0
         foreground: root.bar.foreground
@@ -412,6 +520,7 @@ BarWidget {
       }
 
       Flickable {
+        id: trackFlick
         visible: root.isOurPlayer && root.playlist.length > 0
         width: parent.width
         height: Math.min(trackColumn.implicitHeight, Style.space(300))
@@ -434,14 +543,33 @@ BarWidget {
                 && modelData.title === root.activePlayer.trackTitle
                 && modelData.artist === root.activePlayer.trackArtist
 
+              readonly property string headerLabel: modelData.__head || ""
+              readonly property real rowH: Style.space(38)
+              readonly property real rowY: headerLabel !== "" ? Style.space(20) : 0
               readonly property real pad: Style.space(6)
 
               width: trackColumn.width
-              height: Style.space(38)
+              height: headerLabel !== "" ? rowH + Style.space(20) : rowH
+
+              // Заголовок группы — над строкой, только на смене исполнителя
+              // или альбома (клеймо ставит вычислить-list playlist).
+              Text {
+                visible: parent.headerLabel !== ""
+                x: parent.pad
+                y: 0
+                width: parent.width - parent.pad * 2
+                text: parent.headerLabel
+                textFormat: Text.PlainText
+                color: Qt.darker(root.bar.foreground, 1.5)
+                font.family: root.bar.fontFamily
+                font.pixelSize: Style.font.caption
+                font.italic: true
+                elide: Text.ElideRight
+              }
 
               BorderSurface {
                 x: parent.pad
-                anchors.verticalCenter: parent.verticalCenter
+                y: parent.rowY + (parent.rowH - Style.space(30)) / 2
                 width: Style.space(30)
                 height: Style.space(30)
                 radius: Style.spacing.labelGap
@@ -451,7 +579,9 @@ BarWidget {
                   anchors.fill: parent
                   anchors.margins: Style.space(1)
                   crop: true
-                  url: modelData.coverUrl ? root.server + modelData.coverUrl : ""
+                  // Превью с сервера (?w=) вместо полного джепега: до 200
+                  // строк за попап, а байт вместо megabait'ов.
+                  url: modelData.coverUrl ? root.server + modelData.coverUrl + "?w=64" : ""
                   visible: url != ""
                 }
 
@@ -466,31 +596,37 @@ BarWidget {
                 }
               }
 
-              Column {
+              Item {
                 x: parent.pad + Style.space(38)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(1)
+                y: parent.rowY
+                width: parent.width - parent.pad * 2 - Style.space(38)
+                height: parent.rowH
 
-                Text {
-                  textFormat: Text.PlainText
-                  text: modelData.title || modelData.filename
-                  color: isCurrent ? Commons.Color.accent : root.bar.foreground
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.bodySmall
-                  font.bold: isCurrent
-                  elide: Text.ElideRight
-                  width: trackColumn.width - Style.space(56)
-                }
+                Column {
+                  anchors.verticalCenter: parent.verticalCenter
+                  spacing: Style.space(1)
 
-                Text {
-                  textFormat: Text.PlainText
-                  text: modelData.artist || ""
-                  color: Qt.darker(root.bar.foreground, 1.4)
-                  font.family: root.bar.fontFamily
-                  font.pixelSize: Style.font.caption
-                  elide: Text.ElideRight
-                  width: trackColumn.width - Style.space(56)
-                  visible: text !== ""
+                  Text {
+                    textFormat: Text.PlainText
+                    text: modelData.title || modelData.filename
+                    color: isCurrent ? Commons.Color.accent : root.bar.foreground
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.bodySmall
+                    font.bold: isCurrent
+                    elide: Text.ElideRight
+                    width: trackColumn.width - Style.space(56)
+                  }
+
+                  Text {
+                    textFormat: Text.PlainText
+                    text: modelData.artist || ""
+                    color: Qt.darker(root.bar.foreground, 1.4)
+                    font.family: root.bar.fontFamily
+                    font.pixelSize: Style.font.caption
+                    elide: Text.ElideRight
+                    width: trackColumn.width - Style.space(56)
+                    visible: text !== ""
+                  }
                 }
               }
 
