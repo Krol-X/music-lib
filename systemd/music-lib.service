@@ -1,0 +1,19 @@
+[Unit]
+Description=MusicLib v0 server — личная аудиобиблиотека (Bun + Elysia)
+# default.target у user-менеджера стартует при логине и содержит graphical-session
+After=default.target
+
+[Service]
+WorkingDirectory=%h/Work/music-lib-v0
+ExecStart=%h/.bun/bin/bun src/index.ts
+# Локальный сервис для виджета: наружу не светим.
+Environment=MUSICLIB_HOST=127.0.0.1
+Environment=MUSICLIB_PORT=3000
+# Падение — не приговор (нехватка памяти у ffmpeg и т.п.), systemd поднимет.
+Restart=on-failure
+RestartSec=2
+# SIGTERM: наш shutdown закрывает БД, systemd только подождёт.
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target
