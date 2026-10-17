@@ -35,6 +35,51 @@ BarWidget {
   property var library: []
   property bool libraryLoading: false
 
+  // Длина текущего трека в секундах (MPRIS length; Quickshell отдаёт их
+  // уже в секундах). Ноль — перемотка не показываем вовсе.
+  readonly property real trackLength: activePlayer ? (activePlayer.length ?? 0) : 0
+
+  property int sortIndex: 0 // 0 альбом, 1 трек, 2 исполнитель — как у сервера
+  readonly property var sortLabels: ["альбом", "название", "исполнитель"]
+  readonly property string sortLabel: sortLabels[sortIndex]
+
+  function cycleSort() {
+    sortIndex = (sortIndex + 1) % 3
+  }
+
+  function mmss(sec) {
+    const s = Math.max(0, Math.floor(sec || 0))
+    return Math.floor(s / 60) + ":" + (s % 60 < 10 ? "0" : "") + (s % 60)
+  }
+
+  // Плейлист, каким его видит попап: фильтр по подстроке (название,
+  // исполнитель, альбом) плюс сортировка в режиме из серверного/?sort=…
+  // Режим «album» — тот порядок, в котором список уже пришёл, поэтому
+  // он же порядок очереди моста и next продолжает по списку.
+  readonly property var playlist: {
+    const q = filterField.text.trim().toLowerCase()
+    let items = root.library
+    if (q !== "") {
+      items = items.filter(function(t) {
+        return [t.title, t.artist, t.album].some(function(s) {
+          return s && s.toLowerCase().indexOf(q) !== -1
+        })
+      })
+    }
+    items = items.slice()
+    if (root.sortIndex === 1) {
+      items.sort(function(a, b) { return String(a.title || "").localeCompare(String(b.title || "")) })
+    } else if (root.sortIndex === 2) {
+      items.sort(function(a, b) {
+        return String(a.artist || "").localeCompare(String(b.artist || ""))
+          || String(a.album || "").localeCompare(String(b.album || ""))
+          || String(a.discNo || "").localeCompare(String(b.discNo || ""))
+          || String(a.trackNo || "").localeCompare(String(b.trackNo || ""))
+      })
+    }
+    return items
+  }
+
   function loadLibrary() {
     if (libraryLoading) return
     libraryLoading = true
@@ -262,6 +307,58 @@ BarWidget {
         }
       }
 
+      // ── перемотка ─────────────────────────────────────────────────────────
+      // Позиция тикает сама (positionChanged от моста). Пока тянешь слайдер,
+      // он держит свой liveValue и не дёргается от внешних обновлений, seek
+      // уходит одним относительным вызовом по отпуску: Quickshell даёт
+      // только seek(delta), абсолютный SetPosition gated по trackId.
+      Row {
+        visible: root.activePlayer && root.trackLength > 0
+        width: parent.width
+        spacing: Style.space(6)
+
+        Text {
+          width: Style.space(34)
+          height: Style.space(26)
+          text: root.mmss(root.activePlayer ? root.activePlayer.position : 0)
+          textFormat: Text.PlainText
+          color: root.bar.foreground
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+          verticalAlignment: Text.AlignVCenter
+          horizontalAlignment: Text.AlignRight
+        }
+
+        PanelSlider {
+          height: Style.space(26)
+          width: parent.width - Style.space(86)
+          bar: root.bar
+          minimum: 0
+          maximum: Math.max(1, root.trackLength)
+          step: 1
+          enabled: root.activePlayer && !!root.activePlayer.canSeek
+          opacity: enabled ? 1.0 : 0.4
+          value: root.activePlayer ? (root.activePlayer.position ?? 0) : 0
+
+          onReleased: function(v) {
+            if (!root.activePlayer) return
+            const delta = v - (root.activePlayer.position ?? 0)
+            if (Math.abs(delta) > 0.9) root.activePlayer.seek(delta)
+          }
+        }
+
+        Text {
+          width: Style.space(40)
+          height: Style.space(26)
+          text: root.mmss(root.trackLength)
+          textFormat: Text.PlainText
+          color: Qt.darker(root.bar.foreground, 1.4)
+          font.family: root.bar.fontFamily
+          font.pixelSize: Style.font.caption
+          verticalAlignment: Text.AlignVCenter
+        }
+      }
+
       PanelSeparator {
         visible: root.isOurPlayer && root.library.length > 0
         foreground: root.bar.foreground
@@ -273,8 +370,35 @@ BarWidget {
       // Список в том же порядке, что и очередь моста (sort=album), поэтому
       // «next» после выбора продолжает идти по этому же списку. Секция видна
       // только когда активный плеер — мост (рубеж по имени на шине).
-      Flickable {
+      // Поиск и сортировка — локальные, по уже скачанному списку: в попапе
+      // мгновенный отклик важнее свежести данных, список обновится при
+      // следующем открытии.
+      Row {
         visible: root.isOurPlayer && root.library.length > 0
+        height: Style.space(30)
+        width: parent.width
+        spacing: Style.space(6)
+
+        TextField {
+          id: filterField
+          width: parent.width - sortCycle.implicitWidth - Style.space(6)
+          height: parent.height
+          placeholderText: "поиск: название / исполнитель / альбом"
+          foreground: root.bar.foreground
+          font.family: root.bar.fontFamily
+        }
+
+        Button {
+          id: sortCycle
+          height: parent.height
+          text: root.sortLabel
+          foreground: root.bar.foreground
+          onClicked: root.cycleSort()
+        }
+      }
+
+      Flickable {
+        visible: root.isOurPlayer && root.playlist.length > 0
         width: parent.width
         height: Math.min(trackColumn.implicitHeight, Style.space(300))
         contentHeight: trackColumn.implicitHeight
@@ -287,7 +411,7 @@ BarWidget {
           spacing: Style.space(1)
 
           Repeater {
-            model: root.library
+            model: root.playlist
 
             Item {
               required property var modelData
@@ -365,6 +489,17 @@ BarWidget {
             }
           }
         }
+      }
+
+      Text {
+        visible: root.isOurPlayer && root.library.length > 0 && root.playlist.length === 0
+        width: parent.width
+        textFormat: Text.PlainText
+        text: "ничего не найдено"
+        color: Qt.darker(root.bar.foreground, 1.6)
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.caption
+        horizontalAlignment: Text.AlignHCenter
       }
 
       PanelSeparator {

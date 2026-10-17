@@ -18,7 +18,9 @@
 
 import dbus from "dbus-next";
 import { mkdir, rm } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 
 // В dbus-next класс Interface живёт в подпакете interface, а не в корне.
 const { Interface } = dbus.interface;
@@ -30,6 +32,43 @@ const MPV_PATH = `${process.env.XDG_RUNTIME_DIR ?? "/run/user/1000"}/music-lib-p
 
 /** Список треков: тот же порядок, что и в плейлисте плагина (альбом, внутри трек). */
 const QUEUE_PARAMS = "limit=200&sort=album&order=asc";
+
+/**
+ * Состояние плеера переживает рестарт юнита: сюда на SIGTERM пишется
+ * «кто играл и на какой секунде», на старте отсюда же восстанавливается
+ * Paused-состояние. Это состояние КЛИЕНТА, в базе библиотеки его быть не
+ * должно (ре решено), файл клиента — ровно то место.
+ */
+const stateDir = join(process.env.XDG_STATE_HOME ?? join(homedir(), ".local/state"), "music-lib");
+const statePath = join(stateDir, "player.json");
+
+/** Валиден только такой вид: чужой JSON не должен рушить запуск. */
+function loadResumeState() {
+  try {
+    const saved = JSON.parse(readFileSync(statePath, "utf8"));
+    if (typeof saved !== "object" || saved === null) return null;
+    const { id, positionSec } = saved;
+    if (typeof id !== "string" || id.length !== 64 || id.match(/^[0-9a-f]+$/) === null) return null;
+    const sec = Number(positionSec);
+    if (!Number.isFinite(sec) || sec < 0 || sec > 24 * 3600) return null;
+    return { id, positionSec: sec };
+  } catch {
+    return null;  // файла нет — нормальный старт с нуля
+  }
+}
+
+function persistState() {
+  try {
+    const item = state.tracks[state.index];
+    if (!item) return;
+    mkdirSync(stateDir, { recursive: true });
+    // Позиция только из mpv-фактов, не из догадок: до первого property-change
+    // она ноль, и после рестарта честнее начать с нуля, чем с недостоверного.
+    writeFileSync(statePath, JSON.stringify({ id: item.id, positionSec: Math.floor(state.positionSec), volume: state.volume }));
+  } catch (err) {
+    console.error("не записал state:", err);
+  }
+}
 
 /** URL трека: '/'-пути сервера дополняются префиксом. */
 function url(id) {
@@ -464,6 +503,9 @@ async function fetchTracks() {
 
 /** mpv умер — пересоздать и переподключиться. */
 async function superviseMpv() {
+  // точно один раз за жизнь процесса
+  const resume = loadResumeState();
+  let resumeApplied = false;
   while (true) {
     state.loaded = false;
     setPlaying(false);
@@ -495,6 +537,26 @@ async function superviseMpv() {
       mpv.command(["observe_property", ++observeId, prop]);
     }
 
+    // Восстановление после прошлого запуска: Paused на сохранённой секунде,
+    // БЕЗ автозапуска — рестарт юнита не должен сам включать громкую музыку.
+    // play из виджета продолжит с этого места.
+    if (resume && !resumeApplied) {
+      resumeApplied = true;
+      const i = state.tracks.findIndex((t) => t.id === resume.id);
+      if (i !== -1) {
+        state.index = i;
+        state.loaded = true;
+        state.desiredPause = true;
+        rebuildMetadata();
+        changes({ Metadata: metadata, PlaybackStatus: "Paused" });
+        // Формат mpv 0.38+: опции — четвёртый аргумент (третий = -1),
+        // значения — строго строки, иначе «invalid parameter».
+        mpv.command(["loadfile", url(resume.id), "replace", -1, { start: String(Math.floor(resume.positionSec)) }]);
+        mpv.command(["set_property", "pause", true]);
+        console.log(`* резюм: ${resume.id} на ${Math.floor(resume.positionSec)} с`);
+      }
+    }
+
     const code = await mpvProc.exited;
     console.error(`mpv завершился с кодом ${code}, перезапуск через 2 с`);
     await sleep(2000);
@@ -515,6 +577,7 @@ void superviseMpv();
 function shutdown() {
   void (async () => {
     console.log("* закрываюсь");
+    persistState();
     try {
       await bus.close();
     } catch {
