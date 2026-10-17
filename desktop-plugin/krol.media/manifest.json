@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "krol.media",
+  "name": "MusicLib",
+  "version": "1.0.0",
+  "author": "Omarchy",
+  "description": "MPRIS-плеер личной библиотеки MusicLib: now-playing, кнопки и плейлист с обложками через HTTP сервер",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "MusicLib",
+    "description": "Now-playing с плейлистом библиотеки",
+    "category": "Media",
+    "allowMultiple": false
+  },
+  "omarchy": {
+    "clonedFrom": "omarchy.media"
+  }
+}

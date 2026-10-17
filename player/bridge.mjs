@@ -28,6 +28,9 @@ const SERVER = process.env.MUSICLIB_SERVER ?? "http://127.0.0.1:3000";
 const BUS_NAME = "org.mpris.MediaPlayer2.musiclib";
 const MPV_PATH = `${process.env.XDG_RUNTIME_DIR ?? "/run/user/1000"}/music-lib-player/mpv.sock`;
 
+/** Список треков: тот же порядок, что и в плейлисте плагина (альбом, внутри трек). */
+const QUEUE_PARAMS = "limit=200&sort=album&order=asc";
+
 /** URL трека: '/'-пути сервера дополняются префиксом. */
 function url(id) {
   return `${SERVER}/audio/${id}`;
@@ -213,7 +216,7 @@ async function refreshQueue() {
   const current = state.tracks[state.index] ?? null;
   const before = state.tracks.length;
   try {
-    const res = await fetch(`${SERVER}/tracks?limit=200&sort=created&order=desc`);
+    const res = await fetch(`${SERVER}/tracks?${QUEUE_PARAMS}`);
     if (!res.ok) return;
     const body = await res.json();
     const tracks = body.items ?? [];
@@ -244,6 +247,19 @@ async function previous() {
   if (state.tracks.length === 0) return;
   const i = (state.index + state.tracks.length - 1) % state.tracks.length;
   await transition(i, !state.playing);
+}
+
+/**
+ * «Играть вот этот трек» из плагина: список popup всегда в то же
+ * QUEUE_PARAMS-порядке, что и очередь, поэтому id ищется по месту.
+ * Неизвестный id просто игнорируется (список актуальный, so id из него).
+ */
+async function playById(id) {
+  await refreshQueue();
+  const i = state.tracks.findIndex((t) => t.id === id);
+  if (i === -1) return;
+  // Клик по треку всегда запускает звук: даже если до этого было Stopped.
+  await transition(i, /* pause */ !state.playing && state.loaded);
 }
 
 // ── события mpv = факты о воспроизведении ───────────────────────────────────
@@ -383,6 +399,15 @@ class PlayerInterface extends Interface {
     if (!item || trackId !== trackPath(item)) return;
     mpv.command(["seek", Number(positionUsArg) / 1e6, "absolute"]);
   }
+
+  /**
+   * Опциональный метод MPRIS-спеки: URL из плагина = адрес трека нашего
+   * сервера (/audio/<id>), по нему и играем. Чужие URL не стоят внимания.
+   */
+  OpenUri(uri) {
+    const id = String(uri).split("/").filter(Boolean).pop();
+    void playById(id);
+  }
 }
 
 PlayerInterface.configureMembers({
@@ -407,6 +432,7 @@ PlayerInterface.configureMembers({
     Play: {}, Pause: {}, PlayPause: {}, Stop: {},
     Next: {}, Previous: {}, Seek: { inSignature: "x" },
     SetPosition: { inSignature: "ox" },
+    OpenUri: { inSignature: "s" },
   },
   signals: { Seeked: { signature: "x" } },
 });
@@ -421,7 +447,7 @@ function sleep(ms) {
 async function fetchTracks() {
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
-      const res = await fetch(`${SERVER}/tracks?limit=200&sort=created&order=desc`);
+      const res = await fetch(`${SERVER}/tracks?${QUEUE_PARAMS}`);
       if (res.ok) {
         const body = await res.json();
         state.tracks = body.items ?? [];
