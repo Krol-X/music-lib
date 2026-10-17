@@ -77,27 +77,7 @@ BarWidget {
           || String(a.trackNo || "").localeCompare(String(b.trackNo || ""))
       })
     }
-    // Есть где группировать — вешаем на копию записи признак «сдесьgroupId
-    // сменился»: делегат рисует заголовок группы над строкой. Копии, чтобы
-    // не писать __head в библиотечные записи.
-    const keyed = root.sortIndex === 0
-      ? function(t) { return String(t.artist || "") + " — " + String(t.album || "") }
-      : root.sortIndex === 2
-        ? function(t) { return String(t.artist || "") }
-        : null
-    return items.map(function(t, i) {
-      const copy = Object.assign({}, t)
-      if (keyed) {
-        const fresh = i === 0 || keyed(items[i - 1]) !== keyed(t)
-        copy.__head = fresh ? root.headLabelFor(t) : ""
-      }
-      return copy
-    })
-  }
-
-  function headLabelFor(t) {
-    if (sortIndex === 2) return t.artist || "—"
-    return t.artist && t.album ? t.artist + " — " + t.album : (t.album || t.artist || "—")
+    return items
   }
 
   // Мягко показать то, что играется: при открытии попапа прокрутить список
@@ -115,12 +95,8 @@ BarWidget {
       if (list[i].title === title && (list[i].artist || "") === artist) { idx = i; break }
     }
     if (idx < 0) return
-    // Высоты считаем арифметикой: только два сорта строк и отступ в колонке.
-    let y = 0
-    for (let i = 0; i < idx; i++) {
-      y += (list[i].__head ? Style.space(60) : Style.space(38)) + Style.space(1)
-    }
-    const target = y + Style.space(19) - trackFlick.height * 0.5
+    // Высоты считаем арифметикой: строки одного роста плюс отступ в колонке.
+    const target = idx * (Style.space(38) + Style.space(1)) + Style.space(19) - trackFlick.height * 0.5
     trackFlick.contentY = Math.max(0, Math.min(target, Math.max(0, trackFlick.contentHeight - trackFlick.height)))
   }
 
@@ -543,33 +519,14 @@ BarWidget {
                 && modelData.title === root.activePlayer.trackTitle
                 && modelData.artist === root.activePlayer.trackArtist
 
-              readonly property string headerLabel: modelData.__head || ""
-              readonly property real rowH: Style.space(38)
-              readonly property real rowY: headerLabel !== "" ? Style.space(20) : 0
               readonly property real pad: Style.space(6)
 
               width: trackColumn.width
-              height: headerLabel !== "" ? rowH + Style.space(20) : rowH
-
-              // Заголовок группы — над строкой, только на смене исполнителя
-              // или альбома (клеймо ставит вычислить-list playlist).
-              Text {
-                visible: parent.headerLabel !== ""
-                x: parent.pad
-                y: 0
-                width: parent.width - parent.pad * 2
-                text: parent.headerLabel
-                textFormat: Text.PlainText
-                color: Qt.darker(root.bar.foreground, 1.5)
-                font.family: root.bar.fontFamily
-                font.pixelSize: Style.font.caption
-                font.italic: true
-                elide: Text.ElideRight
-              }
+              height: Style.space(38)
 
               BorderSurface {
                 x: parent.pad
-                y: parent.rowY + (parent.rowH - Style.space(30)) / 2
+                anchors.verticalCenter: parent.verticalCenter
                 width: Style.space(30)
                 height: Style.space(30)
                 radius: Style.spacing.labelGap
@@ -598,9 +555,9 @@ BarWidget {
 
               Item {
                 x: parent.pad + Style.space(38)
-                y: parent.rowY
+                anchors.verticalCenter: parent.verticalCenter
                 width: parent.width - parent.pad * 2 - Style.space(38)
-                height: parent.rowH
+                height: Style.space(38)
 
                 Column {
                   anchors.verticalCenter: parent.verticalCenter
