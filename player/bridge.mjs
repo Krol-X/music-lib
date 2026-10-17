@@ -94,7 +94,7 @@ function rebuildMetadata() {
 function changes(patch) {
   if (!iface) return;
   try {
-    dbus.Interface.emitPropertiesChanged(iface, patch);
+    Interface.emitPropertiesChanged(iface, patch);
   } catch (err) {
     console.error("PropertiesChanged не ушёл:", patch && Object.keys(patch), err);
   }
@@ -418,6 +418,13 @@ async function superviseMpv() {
         "--no-video",
         "--audio-display=no",
         "--keep-open=no",
+        // Локальный пакет mpv-mpris подкладывает /etc/mpv/scripts/mpris.so —
+        // mpv сам регистрирует очередной org.mpris.MediaPlayer2.mpv без
+        // треклиста (CanGoNext=false, без обложки), и omarchy.media выбирает
+        // его активным вместо нас: он же процесс с playback stream в
+        // PipeWire. Скрипты (только скрипты, не конфиг) отключаем для
+        // нашего экземпляра; отдельный mpv пользователя остаётся с MPRIS.
+        "--load-scripts=no",
         `--input-ipc-server=${MPV_PATH}`,
       ],
       { stdout: "ignore", stderr: "ignore" },

@@ -275,6 +275,7 @@ prev/play/next. Мост просто становится для него оч�
 | очередь | `GET /tracks?limit=200` на старте, по кругу (`LoopStatus=Playlist`) |
 | состояние | держит мост, а не mpv: Metadata/trackid и переходы — логика плеера |
 | пауза | своя переменная, события mpv — только сверка: `pause=false` на mpv по умолчанию, property-change при этом не рождается |
+| конкурент | пакет `mpv-mpris` подкладывает `/etc/mpv/scripts/mpris.so`, и наш mpv сам регистрирует второй MPRIS с `CanGoNext=false` и без обложки; omarchy.media выбирает его активным (он же процесс со звуком в PipeWire). Лечится стартом mpv с `--load-scripts=no` — только у нашего экземпляра, у mpv пользователя плагин остаётся |
 | обложка | `mpris:artUrl` = `http://127.0.0.1:3000/cover/:id`, тянется с сервера |
 | переход | `loadfile replace`; по `file-loaded` шлётся `Seeked(0)` — скачок позиции |
 
@@ -286,7 +287,11 @@ prev/play/next. Мост просто становится для него оч�
 - `Position` по спеке не рассылается через PropertiesChanged — только Get;
 - значения словаря `mpris:metadata` обязаны быть Variant'ами: marshalling
   `a{sv}` простой строки не заворачивает и падает с внятной, но неожиданной
-  ошибкой пары `[signature, data]`.
+  ошибкой пары `[signature, data]`;
+- на bun у dbus-next есть класс `Interface` и его статический
+  `emitPropertiesChanged()` — в `dbus-next/lib/service/interface.js`; трогать
+  его надо именно с капитально импортированного класса, `dbus.Interface` в
+  ESM пуст и молча роняет рассылку: виджет зависал на первом состоянии.
 
 Запуск руками: `bun player/bridge.mjs` (зависимость — `dbus-next`).
 Переменная `MUSICLIB_SERVER` (по умолчанию `http://127.0.0.1:3000`),
