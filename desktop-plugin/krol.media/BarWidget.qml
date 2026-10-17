@@ -487,10 +487,17 @@ BarWidget {
         // Повтор: None → Playlist → Track → None, пишем в loopState моста.
         // Внимание: loopState в Quickshell — числовой enum MprisLoopState
         // (None=0, Track=1, Playlist=2), а не строка MPRIS "None"/"Track"/...
+        // Глиф свой на режим (codepoints из cmap Nerd Font): repeat,
+        // repeat-once, repeat-off — путаницы с «выкл» больше нет.
         Button {
-          iconText: "󰁺"
+          iconText: !root.activePlayer || root.activePlayer.loopState === MprisLoopState.None
+            ? String.fromCodePoint(0xF0457) // nf-md-repeat-off
+            : root.activePlayer.loopState === MprisLoopState.Track
+              ? String.fromCodePoint(0xF0458) // nf-md-repeat-once
+              : String.fromCodePoint(0xF0456) // nf-md-repeat
           foreground: root.activePlayer && root.activePlayer.loopState !== MprisLoopState.None
             ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
+          tooltipText: "повтор: выкл / весь плейлист / один трек"
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
           enabled: root.activePlayer !== null
