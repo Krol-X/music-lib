@@ -792,6 +792,14 @@ BarWidget {
           placeholderText: "search…"
           foreground: root.bar.foreground
           font.family: root.bar.fontFamily
+          onActiveFocusChanged: console.warn("media: filter activeFocus =", activeFocus)
+          onCursorVisibleChanged: console.warn("media: filter caret =", cursorVisible)
+          // Клик внутри PopupWindow иногда проходит мимо штатного захвата
+          // фокуса мышью — дублируем явным forceActiveFocus.
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: filterField.forceActiveFocus()
+          }
         }
 
         Button {
@@ -1069,19 +1077,23 @@ BarWidget {
           text: root.editingTrack ? (root.editingTrack.genre || "") : ""
         }
 
-        Row {
+        // save слева, delete прижат к правому краю окна: Row не умеет
+        // распихивать края, поэтому просто Item с двумя якорями.
+        Item {
           width: parent.width
-          spacing: Style.space(6)
+          height: Style.space(28)
 
           Button {
-            height: Style.space(28)
+            anchors.left: parent.left
+            height: parent.height
             text: "save"
             foreground: root.bar.foreground
             onClicked: root.saveEdit()
           }
 
           Button {
-            height: Style.space(28)
+            anchors.right: parent.right
+            height: parent.height
             text: root.confirmDelete ? "really delete?" : "delete"
             foreground: root.confirmDelete ? Commons.Color.accent : root.bar.foreground
             onClicked: root.deleteTrack()
