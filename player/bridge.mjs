@@ -367,36 +367,55 @@ function shuffleTracks(list, current) {
 function orderTracks(tracks) {
   const num = (x) => (x === null || x === undefined ? 0 : Number(x));
   const flip = (c) => (state.queueSort.desc ? -c : c);
+  // Безопасное сравнение nullable-текста: пустые/null значения ВСЕГДА уезжают в конец,
+  // как и в SQL-выборке сервера (IS NULL на первом месте)
+  const cmpText = (a, b) => {
+    const aEmpty = !a || String(a).trim() === "";
+    const bEmpty = !b || String(b).trim() === "";
+    if (aEmpty && bEmpty) return 0;
+    if (aEmpty) return 1;
+    if (bEmpty) return -1;
+    return flip(String(a).localeCompare(String(b)));
+  };
+
   switch (state.queueSort.mode) {
     case "title":
-      tracks.sort((a, b) => flip(String(a.title || "").localeCompare(String(b.title || ""))));
+      tracks.sort((a, b) => (
+        cmpText(a.title, b.title)
+        || String(a.artist || "").localeCompare(String(b.artist || ""))
+        || String(a.album || "").localeCompare(String(b.album || ""))
+        || num(a.trackNo) - num(b.trackNo)
+      ));
       break;
     case "artist":
-      tracks.sort((a, b) => flip(
-        String(a.artist || "").localeCompare(String(b.artist || ""))
-        || String(a.album || "").localeCompare(String(b.album || ""))
+      tracks.sort((a, b) => (
+        cmpText(a.artist, b.artist)
+        || cmpText(a.album, b.album)
         || num(a.discNo) - num(b.discNo)
-        || num(a.trackNo) - num(b.trackNo),
+        || num(a.trackNo) - num(b.trackNo)
       ));
       break;
     case "recent":
       tracks.sort((a, b) => {
-        // null / unplayed всегда в конце, как и на сервере
         const aPlayed = a.lastPlayed ? 1 : 0;
         const bPlayed = b.lastPlayed ? 1 : 0;
-        if (aPlayed !== bPlayed) return bPlayed - aPlayed;
-        return flip(String(a.lastPlayed || "").localeCompare(String(b.lastPlayed || "")));
+        if (aPlayed !== bPlayed) return bPlayed - aPlayed; // nulls always at the end
+        return flip(String(a.lastPlayed || "").localeCompare(String(b.lastPlayed || "")))
+          || String(a.title || "").localeCompare(String(b.title || ""));
       });
       break;
     case "newest":
-      tracks.sort((a, b) => flip(String(a.createdAt || "").localeCompare(String(b.createdAt || ""))));
+      tracks.sort((a, b) => (
+        cmpText(a.createdAt, b.createdAt)
+        || String(a.title || "").localeCompare(String(b.title || ""))
+      ));
       break;
     default: // album
-      tracks.sort((a, b) => flip(
-        String(a.artist || "").localeCompare(String(b.artist || ""))
-        || String(a.album || "").localeCompare(String(b.album || ""))
+      tracks.sort((a, b) => (
+        cmpText(a.artist, b.artist)
+        || cmpText(a.album, b.album)
         || num(a.discNo) - num(b.discNo)
-        || num(a.trackNo) - num(b.trackNo),
+        || num(a.trackNo) - num(b.trackNo)
       ));
   }
   return tracks;
@@ -434,7 +453,19 @@ async function previous() {
  */
 async function playById(id) {
   await refreshQueue();
-  const i = state.tracks.findIndex((t) => t.id === id);
+  let i = state.tracks.findIndex((t) => t.id === id);
+  if (i === -1) {
+    try {
+      const res = await fetch(`${SERVER}/tracks/${id}`);
+      if (res.ok) {
+        const item = await res.json();
+        state.tracks.push(item);
+        i = state.tracks.length - 1;
+      }
+    } catch {
+      // Игнорируем ошибку сети
+    }
+  }
   if (i === -1) return;
   // Клик по треку в списке всегда включает звук: и из Stopped, и из Paused.
   await transition(i, false);
@@ -742,7 +773,8 @@ async function fetchTracks() {
       const res = await fetch(`${SERVER}/tracks?${QUEUE_PARAMS}`);
       if (res.ok) {
         const body = await res.json();
-        state.tracks = body.items ?? [];
+        const items = body.items ?? [];
+        state.tracks = orderTracks(items);
         rebuildMetadata();
         return;
       }

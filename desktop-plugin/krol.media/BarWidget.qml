@@ -94,25 +94,44 @@ BarWidget {
     }
     const num = function(x) { return x === null || x === undefined ? 0 : Number(x) }
     const flip = function(c) { return root.orderDesc ? -c : c }
+    // Безопасное сравнение nullable-текста: пустые/null значения ВСЕГДА уезжают в конец,
+    // как и в SQL-выборке сервера (IS NULL на первом месте)
+    const cmpText = function(a, b) {
+      const aEmpty = !a || String(a).trim() === ""
+      const bEmpty = !b || String(b).trim() === ""
+      if (aEmpty && bEmpty) return 0
+      if (aEmpty) return 1
+      if (bEmpty) return -1
+      return flip(String(a).localeCompare(String(b)))
+    }
+
     if (root.sortIndex === 0) {
+      // 0: Title — по названию, при совпадении — по исполнителю, альбому и номеру трека
       items.sort(function(a, b) {
-        return flip(String(a.title || "").localeCompare(String(b.title || "")))
+        return cmpText(a.title, b.title)
+          || (a.artist || "").localeCompare(b.artist || "")
+          || (a.album || "").localeCompare(b.album || "")
+          || num(a.trackNo) - num(b.trackNo)
       })
     } else if (root.sortIndex === 1) {
+      // 1: Artist — по артисту и альбому с учётом flip, но треки внутри альбома ВСЕГДА в порядке 1..N
       items.sort(function(a, b) {
-        return flip(String(a.artist || "").localeCompare(String(b.artist || ""))
-          || String(a.album || "").localeCompare(String(b.album || ""))
+        return cmpText(a.artist, b.artist)
+          || cmpText(a.album, b.album)
           || num(a.discNo) - num(b.discNo)
-          || num(a.trackNo) - num(b.trackNo))
+          || num(a.trackNo) - num(b.trackNo)
       })
     } else if (root.sortIndex === 2) {
+      // 2: Recent — по штампу последнего прослушивания
       items.sort(function(a, b) {
-        // lastPlayed здесь есть всегда (фильтр выше), остаются только даты.
         return flip(String(a.lastPlayed).localeCompare(String(b.lastPlayed)))
+          || (a.title || "").localeCompare(b.title || "")
       })
     } else {
+      // 3: Newest — по дате добавления
       items.sort(function(a, b) {
-        return flip(String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
+        return cmpText(a.createdAt, b.createdAt)
+          || (a.title || "").localeCompare(b.title || "")
       })
     }
     return items
@@ -135,7 +154,7 @@ BarWidget {
     const lib = root.playlist
     if (root.currentTrackId !== "") {
       for (let i = 0; i < lib.length; i++)
-        if (String(lib[i].coverUrl ?? "").indexOf(root.currentTrackId) !== -1) return i
+        if (lib[i].id === root.currentTrackId || String(lib[i].coverUrl ?? "").indexOf(root.currentTrackId) !== -1) return i
     }
     const t = root.activePlayer.trackTitle ?? ""
     const a = root.activePlayer.trackArtist ?? ""
