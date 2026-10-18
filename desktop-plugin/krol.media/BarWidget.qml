@@ -685,57 +685,6 @@ BarWidget {
         LayoutMirroring.enabled: false
         LayoutMirroring.childrenInherit: true
 
-        // Заливки: иконка-кнопка в ряду транспорта (стрелка вверх из трей),
-        // подсвечивается, пока очередь бежит. Не прячется никогда — панель
-        // открывается по клику, пустая заливка клик просто игнорирует.
-        Button {
-          iconText: String.fromCodePoint(0xF0552) // nf-md-upload (cmap + на глаз)
-          foreground: root.uploadBusy ? Commons.Color.accent
-            : root.uploadItems.length > 0 ? Qt.darker(root.bar.foreground, 1.2)
-            : Qt.darker(root.bar.foreground, 1.6)
-          iconSize: Style.font.iconLarge
-          horizontalPadding: Style.spacing.controlPaddingX
-          verticalPadding: Style.spacing.controlPaddingY
-          tooltipText: "upload progress"
-          onClicked: {
-            // Без истории заливок кнопка работает как «добавить файлы» —
-            // отдельная «＋» переехала в панель заливки.
-            if (root.uploadItems.length === 0 && !root.uploadBusy) {
-              root.uploadPick()
-              return
-            }
-            root.sortMenuOpen = false
-            root.uploadPanelOpen = !root.uploadPanelOpen
-          }
-        }
-
-        // Повтор: None → Playlist → Track → None, пишем в loopState моста.
-        // Внимание: loopState в Quickshell — числовой enum MprisLoopState
-        // (None=0, Track=1, Playlist=2), а не строка MPRIS "None"/"Track"/...
-        // Глиф свой на режим (codepoints из cmap Nerd Font): repeat,
-        // repeat-once, repeat-off — путаницы с «выкл» больше нет.
-        Button {
-          iconText: !root.activePlayer || root.activePlayer.loopState === MprisLoopState.None
-            ? String.fromCodePoint(0xF0457) // nf-md-repeat-off
-            : root.activePlayer.loopState === MprisLoopState.Track
-              ? String.fromCodePoint(0xF0458) // nf-md-repeat-once
-              : String.fromCodePoint(0xF0456) // nf-md-repeat
-          foreground: root.activePlayer && root.activePlayer.loopState !== MprisLoopState.None
-            ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
-          tooltipText: "repeat: off / playlist / one track"
-          iconSize: Style.font.iconLarge
-          horizontalPadding: Style.spacing.controlPaddingX
-          verticalPadding: Style.spacing.controlPaddingY
-          enabled: root.activePlayer !== null && !root.emptyLib
-          opacity: enabled ? 1.0 : 0.4
-          onClicked: {
-            if (!root.activePlayer) return
-            const cur = root.activePlayer.loopState
-            root.activePlayer.loopState = cur === MprisLoopState.None ? MprisLoopState.Playlist
-              : cur === MprisLoopState.Playlist ? MprisLoopState.Track : MprisLoopState.None
-          }
-        }
-
         // Шафл: MPRIS Shuffle, мост держит перемешанную очередь, выключение
         // возвращает album/asc. Глиф один, состояние цветом.
         Button {
@@ -780,6 +729,57 @@ BarWidget {
           enabled: root.activePlayer && root.activePlayer.canGoNext && !root.emptyLib
           opacity: enabled ? 1.0 : 0.4
           onClicked: if (root.mediaService) root.mediaService.runAction("next", false, root.mediaService.playerKey(root.activePlayer))
+        }
+
+        // Повтор: None → Playlist → Track → None, пишем в loopState моста.
+        // Внимание: loopState в Quickshell — числовой enum MprisLoopState
+        // (None=0, Track=1, Playlist=2), а не строка MPRIS "None"/"Track"/...
+        // Глиф свой на режим (codepoints из cmap Nerd Font): repeat,
+        // repeat-once, repeat-off — путаницы с «выкл» больше нет.
+        Button {
+          iconText: !root.activePlayer || root.activePlayer.loopState === MprisLoopState.None
+            ? String.fromCodePoint(0xF0457) // nf-md-repeat-off
+            : root.activePlayer.loopState === MprisLoopState.Track
+              ? String.fromCodePoint(0xF0458) // nf-md-repeat-once
+              : String.fromCodePoint(0xF0456) // nf-md-repeat
+          foreground: root.activePlayer && root.activePlayer.loopState !== MprisLoopState.None
+            ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
+          tooltipText: "repeat: off / playlist / one track"
+          iconSize: Style.font.iconLarge
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY
+          enabled: root.activePlayer !== null && !root.emptyLib
+          opacity: enabled ? 1.0 : 0.4
+          onClicked: {
+            if (!root.activePlayer) return
+            const cur = root.activePlayer.loopState
+            root.activePlayer.loopState = cur === MprisLoopState.None ? MprisLoopState.Playlist
+              : cur === MprisLoopState.Playlist ? MprisLoopState.Track : MprisLoopState.None
+          }
+        }
+
+        // Заливка: трей-иконка в конце ряда, последний в ряду транспорта. Не
+        // прячется никогда; без истории заливок клик открывает диалог файлов,
+        // иначе — панель.
+        Button {
+          iconText: String.fromCodePoint(0xF0552) // nf-md-upload (cmap + на глаз)
+          foreground: root.uploadBusy ? Commons.Color.accent
+            : root.uploadItems.length > 0 ? Qt.darker(root.bar.foreground, 1.2)
+            : Qt.darker(root.bar.foreground, 1.6)
+          iconSize: Style.font.iconLarge
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY
+          tooltipText: "upload progress"
+          onClicked: {
+            // Без истории заливок кнопка работает как «добавить файлы» —
+            // отдельная «＋» переехала в панель заливки.
+            if (root.uploadItems.length === 0 && !root.uploadBusy) {
+              root.uploadPick()
+              return
+            }
+            root.sortMenuOpen = false
+            root.uploadPanelOpen = !root.uploadPanelOpen
+          }
         }
 
       }
