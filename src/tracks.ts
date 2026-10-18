@@ -67,13 +67,22 @@ export function trackToJson(row: TrackRow): Record<string, unknown> {
 export async function markTrackPlayed(
   db: Knex,
   id: string,
+  durationSec?: number | null,
 ): Promise<Record<string, unknown> | null> {
+  const row = await db("tracks").where("id", id).first();
+  if (!row) return null;
   const now = new Date().toISOString().slice(0, 19).replace("T", " ");
-  const count = await db("tracks").where("id", id).update({
+  const update: Record<string, string | number | Knex.Raw> = {
     last_played_at: now,
     play_count: db.raw("play_count + 1"),
-  });
-  if (count === 0) return null;
+  };
+  // Мост знает фактическую длину лучше, чем пустая строка БД у рипов без
+  // тегов: разовый fill — потом правится руками как любое поле.
+  if ((row.duration_sec === null || row.duration_sec === undefined)
+    && typeof durationSec === "number" && durationSec >= 1 && durationSec <= 86400) {
+    update.duration_sec = Math.round(durationSec);
+  }
+  await db("tracks").where("id", id).update(update);
   return trackToJson(await db("tracks").where("id", id).first());
 }
 

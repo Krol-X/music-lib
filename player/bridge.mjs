@@ -89,6 +89,7 @@ const state = {
   loop: "Playlist", // None | Track | Playlist; очередь крутится у нас самих
   listenedSec: 0, // непрерывное звучание текущего трека, тикает только при play
   playedReported: false, // факт этого трека уже ушёл на сервер (живой штамп)
+  announcedLengthSec: 0, // какая длина уже ушла в Metadata (чтобы не слать заново)
 };
 
 /** interface используется в обработчиках событий раньше своего создания. */
@@ -119,7 +120,9 @@ function rebuildMetadata() {
   }
   const m = {
     "mpris:trackid": new Variant("o", trackPath(item)),
-    "mpris:length": new Variant("x", BigInt(Math.round((item.durationSec ?? 0) * 1e6))),
+    // БД прав, но mpv-факт надёжнее: после property-change duration
+    // state.durationSec уже наполнен, у дыр в базе длина честная.
+    "mpris:length": new Variant("x", BigInt(Math.round((item.durationSec ?? state.durationSec ?? 0) * 1e6))),
     "xesam:url": new Variant("s", url(item.id)),
     // Название неизвестно только у рипов без тегов: filename честнее null.
     "xesam:title": new Variant("s", item.title ?? item.filename ?? "Без названия"),
@@ -129,6 +132,9 @@ function rebuildMetadata() {
   if (item.genre) m["xesam:genre"] = new Variant("as", [item.genre]);
   if (item.coverUrl) m["mpris:artUrl"] = new Variant("s", `${SERVER}${item.coverUrl}`);
   metadata = m;
+  // Память о том, какая длина уже объявлена: сигнал Metadata не
+  // пересылаем по кругу впустую.
+  state.announcedLengthSec = Math.round(item.durationSec ?? state.durationSec ?? 0);
 }
 
 /**
@@ -264,6 +270,10 @@ function reportPlayed() {
   console.log(`* учёт: ${item.id.slice(0, 8)} прослушан (${state.listenedSec} с)`);
   return fetch(`${SERVER}/tracks/${item.id}/play`, {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
+    // Длительность разом заполняет дыру duration_sec в строке трека:
+    // следующий запуск перемотки знает длину не из тегов, а из факта.
+    body: JSON.stringify({ duration: state.durationSec ?? null }),
     signal: AbortSignal.timeout(1500),
   })
     .then((res) => {
@@ -378,7 +388,18 @@ mpv.onEvent(function onEventMsg(msg) {
         }
         state.positionSec = next;
       }
-      if (msg.name === "duration") state.durationSec = msg.data ?? null;
+      if (msg.name === "duration") {
+        const d = msg.data ?? null;
+        state.durationSec = d;
+        // Длину mpv даёт уже после загрузки файла. В метадате она из строки
+        // БД, и если там дыра (трек без тегов) — длина остаётся нулём, а
+        // виджет прячет полоску перемотки. Как только mpv сообщил гармонию,
+        // пересобираем Metadata и рапортуем заново.
+        if (state.loaded && d !== null && d > 0 && state.announcedLengthSec !== Math.round(d)) {
+          rebuildMetadata();
+          changes({ Metadata: metadata });
+        }
+      }
       // Громкость меняют не только наши руки (mpv-клавиши, если mpv-окно):
       // синхронизируем и рапортуем в PropertiesChanged, виджет не отстанет.
       if (msg.name === "volume") {

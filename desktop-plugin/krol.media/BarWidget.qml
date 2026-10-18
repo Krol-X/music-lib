@@ -642,8 +642,10 @@ BarWidget {
       // он держит свой liveValue и не дёргается от внешних обновлений, seek
       // уходит одним относительным вызовом по отпуску: Quickshell даёт
       // только seek(delta), абсолютный SetPosition gated по trackId.
+      // У трека без duration в БД длина до прихода mpv-факта нулевая — не
+      // прятать полоску вовсе, она пустой ползунком просто ждёт факт.
       Row {
-        visible: root.activePlayer && root.trackLength > 0
+        visible: !!root.activePlayer && (root.trackLength > 0 || (root.activePlayer.canSeek ?? false))
         width: parent.width
         spacing: Style.space(6)
 

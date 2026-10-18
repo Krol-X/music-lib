@@ -435,16 +435,21 @@ export function buildApp(db: Knex) {
       if (!row) return errorResponse(404, "трек не найден");
       return trackToJson(row);
     })
-    .post("/tracks/:id/play", async ({ params }) => {
-      const updated = await markTrackPlayed(db, params.id);
-      if (!updated) return errorResponse(404, "трек не найден");
-      broadcastPlayed({
-        trackId: params.id,
-        lastPlayed: String(updated.lastPlayed),
-        playCount: Number(updated.playCount),
-      });
-      return updated;
-    })
+    .post(
+      "/tracks/:id/play",
+      { body: t.Object({ duration: t.Optional(t.Number()) }) },
+      async ({ params, body }) => {
+        const duration = typeof body.duration === "number" ? body.duration : null;
+        const updated = await markTrackPlayed(db, params.id, duration);
+        if (!updated) return errorResponse(404, "трек не найден");
+        broadcastPlayed({
+          trackId: params.id,
+          lastPlayed: String(updated.lastPlayed),
+          playCount: Number(updated.playCount),
+        });
+        return updated;
+      },
+    )
     .patch(
       "/tracks/:id",
       { body: patchSchema },
