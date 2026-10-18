@@ -20,6 +20,9 @@ BarWidget {
   readonly property string artist: activePlayer ? (activePlayer.trackArtist || "") : ""
 
   property bool popupOpen: false
+  // Пустая библиотека у НАШЕГО плеера: транспорт и заголовок трека глушим —
+  // мост честно рапортует последний удалённый трек, верить ему уже нельзя.
+  readonly property bool emptyLib: isOurPlayer && library.length === 0
 
   function close() { popupOpen = false }
   property real maxLabelWidth: 180
@@ -418,7 +421,7 @@ BarWidget {
       height: glyph.height
       clip: true
       anchors.verticalCenter: parent.verticalCenter
-      visible: !root.bar.vertical && root.title !== ""
+      visible: !root.bar.vertical && root.title !== "" && !root.emptyLib
 
       Text {
         id: labelText
@@ -486,6 +489,7 @@ BarWidget {
       spacing: Style.space(10)
 
       Row {
+        visible: !root.emptyLib
         spacing: Style.space(10)
         width: parent.width
 
@@ -580,7 +584,7 @@ BarWidget {
           iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
-          enabled: root.activePlayer !== null
+          enabled: root.activePlayer !== null && !root.emptyLib
           opacity: enabled ? 1.0 : 0.4
           onClicked: {
             if (!root.activePlayer) return
@@ -596,7 +600,7 @@ BarWidget {
           iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
-          enabled: root.activePlayer && root.activePlayer.canGoPrevious
+          enabled: root.activePlayer && root.activePlayer.canGoPrevious && !root.emptyLib
           opacity: enabled ? 1.0 : 0.4
           onClicked: if (root.mediaService) root.mediaService.runAction("previous", false, root.mediaService.playerKey(root.activePlayer))
         }
@@ -607,7 +611,7 @@ BarWidget {
           iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
-          enabled: root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause)
+          enabled: root.activePlayer && (root.activePlayer.canTogglePlaying || root.activePlayer.canPlay || root.activePlayer.canPause) && !root.emptyLib
           opacity: enabled ? 1.0 : 0.4
           onClicked: if (root.mediaService) root.mediaService.runAction("playPause", false, root.mediaService.playerKey(root.activePlayer))
         }
@@ -618,7 +622,7 @@ BarWidget {
           iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
-          enabled: root.activePlayer && root.activePlayer.canGoNext
+          enabled: root.activePlayer && root.activePlayer.canGoNext && !root.emptyLib
           opacity: enabled ? 1.0 : 0.4
           onClicked: if (root.mediaService) root.mediaService.runAction("next", false, root.mediaService.playerKey(root.activePlayer))
         }
@@ -643,6 +647,19 @@ BarWidget {
         }
       }
 
+      // Пустая библиотека: вместо мёртвых метаданных моста — одна внятная
+      // подсказка, единственное живое действие остаётся «＋» в транспорте.
+      Text {
+        visible: root.emptyLib && root.editingTrack === null
+        width: parent.width
+        horizontalAlignment: Text.AlignHCenter
+        textFormat: Text.PlainText
+        text: "library is empty — ＋ uploads tracks"
+        color: Qt.darker(root.bar.foreground, 1.4)
+        font.family: root.bar.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
       // ── перемотка ─────────────────────────────────────────────────────────
       // Позиция тикает сама (positionChanged от моста). Пока тянешь слайдер,
       // он держит свой liveValue и не дёргается от внешних обновлений, seek
@@ -651,7 +668,7 @@ BarWidget {
       // У трека без duration в БД длина до прихода mpv-факта нулевая — не
       // прятать полоску вовсе, она пустой ползунком просто ждёт факт.
       Row {
-        visible: !!root.activePlayer && (root.trackLength > 0 || (root.activePlayer.canSeek ?? false))
+        visible: !!root.activePlayer && !root.emptyLib && (root.trackLength > 0 || (root.activePlayer.canSeek ?? false))
         width: parent.width
         spacing: Style.space(6)
 
