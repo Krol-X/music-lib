@@ -185,6 +185,9 @@ BarWidget {
     // обратно сразу — панель прогресса теперь сама по себе живёт тут.
     if (popupOpen) popupOpen = false
     pickProc.command = ["zenity", "--file-selection", "--multiple",
+      // zenity по умолчанию склеивает пути через "|" — а имя файла может
+      // содержать такой символ, да и split по "\n" ниже честнее.
+      "--separator", "\n",
       "--title", "Upload to library",
       "--file-filter", "Audio | *.mp3 *.flac *.wav *.ogg *.mka",
       "--file-filter", "All files | *"]
