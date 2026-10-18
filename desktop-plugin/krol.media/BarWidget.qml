@@ -189,7 +189,7 @@ BarWidget {
       // содержать такой символ, да и split по "\n" ниже честнее.
       "--separator", "\n",
       "--title", "Upload to library",
-      "--file-filter", "Audio | *.mp3 *.flac *.wav *.ogg *.mka",
+      "--file-filter", "Audio | *.mp3 *.flac *.wav *.ogg *.mka *.opus *.aac *.wma *.aiff *.m4a",
       "--file-filter", "All files | *"]
     pickProc.running = true
   }
@@ -1006,45 +1006,64 @@ BarWidget {
           }
         }
 
-        Repeater {
-          model: root.uploadItems
-          Row {
-            required property var modelData
-            required property int index
-            width: uploadPanelCol.width
-            spacing: Style.space(6)
-            height: Style.space(26)
+        Flickable {
+          width: parent.width
+          // Тот же потолок, что у плейлиста: пачки бывают десятками файлов,
+          // без ограничения панель распахивает окно на весь экран.
+          height: Math.min(rowsColumn.implicitHeight, Style.space(196))
+          contentHeight: rowsColumn.implicitHeight
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
 
-            Text {
-              textFormat: Text.PlainText
-              text: modelData.state === "uploading" ? "→  " + modelData.name
-                : modelData.state === "pending" ? "·  " + modelData.name
-                : modelData.state === "ok" ? "✓  " + modelData.name
-                : "✕  " + modelData.name
-              color: modelData.state === "uploading" ? root.bar.foreground
-                : modelData.state === "ok" ? Qt.darker(root.bar.foreground, 1.6)
-                : modelData.state === "fail" ? Commons.Color.accent
-                : Qt.darker(root.bar.foreground, 1.3)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              elide: Text.ElideRight
-              width: parent.width - uploadPanelCol.upDownWidth - Style.space(6)
-            }
+          Column {
+            id: rowsColumn
+            width: parent.width
+            spacing: Style.space(1)
 
-            Text {
-              textFormat: Text.PlainText
-              readonly property real pct: modelData.state === "uploading" ? root.uploadPct
-                : modelData.state === "ok" ? 100
-                : modelData.state === "fail" ? 0
-                : modelData.state === "pending" ? 0 : 0
-              text: modelData.state === "uploading" ? pct + "%"
-                : modelData.state === "ok" ? "✓"
-                : modelData.state === "fail" ? "✕" : "—"
-              color: modelData.state === "fail" ? Commons.Color.accent
-                : Qt.darker(root.bar.foreground, 1.4)
-              font.family: root.bar.fontFamily
-              font.pixelSize: Style.font.caption
-              horizontalAlignment: Text.AlignRight
+            Repeater {
+              model: root.uploadItems
+              Row {
+                required property var modelData
+                required property int index
+                width: uploadPanelCol.width
+                spacing: Style.space(6)
+                height: Style.space(26)
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: modelData.state === "uploading" ? "→  " + modelData.name
+                    : modelData.state === "pending" ? "·  " + modelData.name
+                    : modelData.state === "ok" ? "✓  " + modelData.name
+                    : "✕  " + modelData.name
+                  color: modelData.state === "uploading" ? root.bar.foreground
+                    : modelData.state === "ok" ? Qt.darker(root.bar.foreground, 1.6)
+                    : modelData.state === "fail" ? Commons.Color.accent
+                    : Qt.darker(root.bar.foreground, 1.3)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                  elide: Text.ElideRight
+                  width: parent.width - uploadPanelCol.upDownWidth - Style.space(6)
+                }
+
+                Text {
+                  textFormat: Text.PlainText
+                  readonly property real pct: modelData.state === "uploading" ? root.uploadPct
+                    : modelData.state === "ok" ? 100
+                    : modelData.state === "fail" ? 0
+                    : 0
+                  // Байты дошли до 100%, но сервер ещё конвертирует и пишет
+                  // базу — до ответа это не «готово», а конвертация.
+                  text: modelData.state === "uploading"
+                    ? (root.uploadPct < 100 ? root.uploadPct + "%" : "converting…")
+                    : modelData.state === "ok" ? "✓"
+                    : modelData.state === "fail" ? "✕" : "—"
+                  color: modelData.state === "fail" ? Commons.Color.accent
+                    : Qt.darker(root.bar.foreground, 1.4)
+                  font.family: root.bar.fontFamily
+                  font.pixelSize: Style.font.caption
+                  horizontalAlignment: Text.AlignRight
+                }
+              }
             }
           }
         }

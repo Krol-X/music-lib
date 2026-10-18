@@ -74,6 +74,7 @@ def main() -> int:
         body.close()
         conn.send(post)
         sent += len(post)
+        report()
 
         resp = conn.getresponse()
         print(resp.read().decode("utf-8", "replace"), flush=True)
