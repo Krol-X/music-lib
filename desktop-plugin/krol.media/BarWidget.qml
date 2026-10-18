@@ -698,7 +698,12 @@ BarWidget {
           verticalPadding: Style.spacing.controlPaddingY
           tooltipText: "upload progress"
           onClicked: {
-            if (root.uploadItems.length === 0 && !root.uploadBusy) return
+            // Без истории заливок кнопка работает как «добавить файлы» —
+            // отдельная «＋» переехала в панель заливки.
+            if (root.uploadItems.length === 0 && !root.uploadBusy) {
+              root.uploadPick()
+              return
+            }
             root.sortMenuOpen = false
             root.uploadPanelOpen = !root.uploadPanelOpen
           }
@@ -729,6 +734,19 @@ BarWidget {
             root.activePlayer.loopState = cur === MprisLoopState.None ? MprisLoopState.Playlist
               : cur === MprisLoopState.Playlist ? MprisLoopState.Track : MprisLoopState.None
           }
+        }
+
+        // Шафл: MPRIS Shuffle, мост держит перемешанную очередь, выключение
+        // возвращает album/asc. Глиф один, состояние цветом.
+        Button {
+          iconText: String.fromCodePoint(0xF0397) // nf-md-shuffle (проверено рендером)
+          foreground: root.activePlayer && root.activePlayer.shuffle
+            ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
+          iconSize: Style.font.iconLarge
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY
+          tooltipText: "shuffle queue"
+          onClicked: if (root.activePlayer) root.activePlayer.shuffle = !(root.activePlayer.shuffle ?? false)
         }
 
         Button {
@@ -766,22 +784,8 @@ BarWidget {
 
         // Заливка треков: иконка без подписи, всплывает подсказка.
         // Открывает zenity-диалог и цепочку curl-заливок; перед диалогом
-        // закрывает попап (grab держал бы диалог под виджетом).
-        Button {
-          iconText: "󰐕"
-          tooltipText: "upload tracks to library"
-          foreground: root.bar.foreground
-          iconSize: Style.font.iconLarge
-          horizontalPadding: Style.spacing.controlPaddingX
-          verticalPadding: Style.spacing.controlPaddingY
-          enabled: !root.uploadBusy
-          opacity: enabled ? 1.0 : 0.4
-          onClicked: {
-            editStatus = ""
-            root.uploadPick()
-          }
-        }
       }
+    }
 
       // Пустая библиотека: вместо мёртвых метаданных моста — одна внятная
       // подсказка, единственное живое действие остаётся «＋» в транспорте.
@@ -985,6 +989,22 @@ BarWidget {
             text: "cancel"
             foreground: root.bar.foreground
             onClicked: root.uploadCancel()
+          }
+
+          // Заливка подсадила сюда «＋»: добавить файла к бегущей/готовой
+          // пачке, не выключая панель.
+          Button {
+            height: Style.space(26)
+            iconText: "󰐕"
+            iconSize: Style.font.caption
+            tooltipText: "add files to the queue"
+            foreground: root.bar.foreground
+            enabled: !root.uploadBusy
+            opacity: enabled ? 1.0 : 0.4
+            onClicked: {
+              editStatus = ""
+              root.uploadPick()
+            }
           }
         }
 

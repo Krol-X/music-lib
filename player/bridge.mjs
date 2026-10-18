@@ -87,6 +87,7 @@ const state = {
   durationSec: null,
   volume: 100,    // mpv-шкала 0..100; в MPRIS отдаётся 0..1
   loop: "Playlist", // None | Track | Playlist; очередь крутится у нас самих
+  shuffle: false,  // mpv перемешал очередь: album/asc вернуть может рестарт
   listenedSec: 0, // непрерывное звучание текущего трека, тикает только при play
   playedReported: false, // факт этого трека уже ушёл на сервер (живой штамп)
   announcedLengthSec: 0, // какая длина уже ушла в Metadata (чтобы не слать заново)
@@ -316,8 +317,9 @@ async function refreshQueue() {
     const res = await fetch(`${SERVER}/tracks?${QUEUE_PARAMS}`);
     if (!res.ok) return;
     const body = await res.json();
-    const tracks = body.items ?? [];
+    let tracks = body.items ?? [];
     if (tracks.length === 0) return;
+    if (state.shuffle) tracks = shuffleTracks(tracks, current);
     state.tracks = tracks;
     const i = current ? state.tracks.findIndex((t) => t.id === current.id) : -1;
     state.index = i >= 0 ? i : 0;
@@ -328,6 +330,19 @@ async function refreshQueue() {
   if (state.tracks.length !== before) {
     changes({ CanGoNext: state.tracks.length > 1, CanGoPrevious: state.tracks.length > 1 });
   }
+}
+
+/**
+ * Fisher–Yates по списку треков с сохранением играющего первым: переходы
+ * «next» и «previous» внутри перемешанной очереди не рвут текущий трек.
+ */
+function shuffleTracks(list, current) {
+  const rest = current ? list.filter((t) => t.id !== current.id) : [...list];
+  for (let i = rest.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [rest[i], rest[j]] = [rest[j], rest[i]];
+  }
+  return current ? [current, ...rest] : rest;
 }
 
 async function next(auto = false) {
@@ -494,7 +509,16 @@ class PlayerInterface extends Interface {
     // не зацикливает. Рапортуем значение, чтобы виджет кнопки не болтался.
     changes({ LoopStatus: state.loop });
   }
-  get Shuffle() { return false; }
+  get Shuffle() { return state.shuffle; }
+  set Shuffle(v) {
+    state.shuffle = Boolean(v);
+    // Очередь у нас своя (пересобирается с сервера при каждом переходе),
+    // поэтому mpv-shuffle не участвует: текущий порядок живёт в state.tracks,
+    // флаг решает, что fetchTracks дальше будет мешать. Выключение — просто
+    // пересборка в album/asc.
+    void refreshQueue();
+    changes({ Shuffle: state.shuffle });
+  }
   get Metadata() { return metadata; }
   /** Position не шлют через PropertiesChanged: спека запрещает, читайте Get. */
   get Position() { return positionUs(); }
@@ -587,7 +611,7 @@ PlayerInterface.configureMembers({
   properties: {
     PlaybackStatus: { signature: "s", access: dbus.interface.ACCESS_READ },
     LoopStatus: { signature: "s", access: dbus.interface.ACCESS_READWRITE },
-    Shuffle: { signature: "b", access: dbus.interface.ACCESS_READ },
+    Shuffle: { signature: "b", access: dbus.interface.ACCESS_READWRITE },
     Metadata: { signature: "a{sv}", access: dbus.interface.ACCESS_READ },
     Position: { signature: "x", access: dbus.interface.ACCESS_READ },
     Volume: { signature: "d", access: dbus.interface.ACCESS_READWRITE },
