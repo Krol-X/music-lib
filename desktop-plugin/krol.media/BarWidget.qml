@@ -47,11 +47,11 @@ BarWidget {
   // Сортировка плейлиста — локальная, по уже скачанному списку. Четыре
   // режима и направление; дефолты честные: «Recent» и «Newest» смотрим
   // сверху вниз по времени (desc), текстовые поля — по алфавиту (asc).
-  property int sortIndex: 0 // 0 Title, 1 Artist, 2 Recent, 3 Newest
-  readonly property var sortLabels: ["Title", "Artist", "Recent", "Newest"]
+  property int sortIndex: 0 // 0 Title, 1 Recent, 2 Newest
+  readonly property var sortLabels: ["Title", "Recent", "Newest"]
   readonly property string sortLabel: sortLabels[sortIndex]
   property bool orderDesc: false
-  readonly property var sortDefaultDesc: [false, false, true, true]
+  readonly property var sortDefaultDesc: [false, true, true]
   // «Селект» режима: меню выбора рисуется на месте плейлиста.
   property bool sortMenuOpen: false
 
@@ -89,7 +89,7 @@ BarWidget {
     items = items.slice()
     // Режим «Recent» показывает только то, что играло: непрослушанные
     // треки (lastPlayed null) убраны из вида совсем.
-    if (root.sortIndex === 2) {
+    if (root.sortIndex === 1) {
       items = items.filter(function(t) { return !!t.lastPlayed })
     }
     const num = function(x) { return x === null || x === undefined ? 0 : Number(x) }
@@ -104,86 +104,117 @@ BarWidget {
       if (bEmpty) return -1
       return flip(String(a).localeCompare(String(b)))
     }
+    // Последний ключ ВСЕГДА id: у библиотеки полно треков с одинаковыми
+    // тегами (разные рипы, Part 1/Part 2 с одинаковым заголовком), и без
+    // явного tie-break их взаимный порядок — случайность Array.sort. Раньше
+    // из-за этого Next «прыгал» между ними. id уникален и не переворачивается:
+    // направление сортировки про пользователя, порядок внутри группы по названию.
+    const cmpId = function(a, b) {
+      if (!a || !b || a.id === b.id) return 0
+      return String(a.id) < String(b.id) ? -1 : 1
+    }
 
     if (root.sortIndex === 0) {
-      // 0: Title — по названию (или имени файла), при совпадении — по исполнителю, альбому и номеру трека
+      // 0: Title — по названию (или имени файла), затем по исполнителю,
+      // альбому и номеру трека. Все текстовые ключи через cmpText, а не голый
+      // localeCompare: только так работает переворот направления (desc) и
+      // одинаковая обработка пустых значений. Компаратор обязан совпадать с
+      // orderTracks в мосте, иначе Next уйдёт не по нарисованному списку.
       items.sort(function(a, b) {
         return cmpText(a.title || a.filename, b.title || b.filename)
-          || (a.artist || "").localeCompare(b.artist || "")
-          || (a.album || "").localeCompare(b.album || "")
+          || cmpText(a.artist, b.artist)
+          || cmpText(a.album, b.album)
           || num(a.trackNo) - num(b.trackNo)
+          || cmpId(a, b)
       })
     } else if (root.sortIndex === 1) {
-      // 1: Artist — по артисту и альбому с учётом flip, но треки внутри альбома ВСЕГДА в порядке 1..N
-      items.sort(function(a, b) {
-        return cmpText(a.artist, b.artist)
-          || cmpText(a.album, b.album)
-          || num(a.discNo) - num(b.discNo)
-          || num(a.trackNo) - num(b.trackNo)
-          || cmpText(a.title || a.filename, b.title || b.filename)
-      })
-    } else if (root.sortIndex === 2) {
-      // 2: Recent — по штампу последнего прослушивания
+      // 1: Recent — по штампу последнего прослушивания (те же ключи, что в мосте)
       items.sort(function(a, b) {
         return flip(String(a.lastPlayed).localeCompare(String(b.lastPlayed)))
           || cmpText(a.title || a.filename, b.title || b.filename)
+          || cmpId(a, b)
       })
     } else {
-      // 3: Newest — по дате добавления
+      // 2: Newest — по дате добавления. Дату показываем рядом с треком:
+      // в этом режиме она и есть смысл порядка, по названию строки её не вывести.
       items.sort(function(a, b) {
         return cmpText(a.createdAt, b.createdAt)
           || cmpText(a.title || a.filename, b.title || b.filename)
+          || cmpId(a, b)
       })
     }
     return items
   }
 
-  // Уникальный ключ играющего трека: мост кладёт в mpris:artUrl путь вида
-  // /cover/<id>.<ext>, а id трека уникален в БД. Теги (title+artist) —
-  // только запасной матч для треков без обложки.
-  readonly property string currentTrackId: {
-    if (!root.activePlayer) return ""
-    const m = String(root.activePlayer.trackArtUrl ?? "")
-      .match(/\/cover\/([0-9a-f]{64})(?:$|\?|\.)/)
-    return m ? m[1] : ""
-  }
+  // id играющего трека приходит ОТ МОСТА через sort-сокет ("now <id>"):
+  // mpris:trackid мост отдаёт, но Quickshell не пробрасывает это свойство
+  // в QML, а mpris:artUrl есть не у каждого трека (нет обложки — нет artUrl).
+  // Поэтому единственный надёжный источник id — push от самого моста.
+  property string bridgeTrackId: ""
 
-  // Индекс единственной подсвечиваемой строки: точный матч по id, а при
-  // отсутствии обложки — первый матч «сейчас играет» по title+artist.
+  // Индекс единственной подсвечиваемой строки: точный матч по id от моста.
+  // Фоллбэк по тегам — только если id ещё не пришёл (или пришёл от чужого
+  // плеера) И в списке ровно одно совпадение: при дублях названий подсветка
+  // «первой попавшейся» и есть тот самый баг, ради которого всё затевалось.
   readonly property int currentPlaylistRow: {
     if (!root.activePlayer) return -1
     const lib = root.playlist
-    if (root.currentTrackId !== "") {
+    const id = root.bridgeTrackId
+    if (id !== "") {
       for (let i = 0; i < lib.length; i++)
-        if (lib[i].id === root.currentTrackId || String(lib[i].coverUrl ?? "").indexOf(root.currentTrackId) !== -1) return i
+        if (lib[i].id === id) return i
+      // id известен, но в списке его нет (фильтр/сортировка/пока не подгрузили):
+      // подсвечивать нечего — фоллбэк по тегам тут соврал бы.
+      return -1
     }
     const t = root.activePlayer.trackTitle ?? ""
     const a = root.activePlayer.trackArtist ?? ""
+    let found = -1
     for (let i = 0; i < lib.length; i++) {
       const it = lib[i]
-      if ((it.title ?? "") === t && (it.artist ?? "") === a) return i
+      if ((it.title ?? "") === t && (it.artist ?? "") === a) {
+        if (found !== -1) return -1   // два совпадения — не выбираем ни одно
+        found = i
+      }
     }
-    return -1
+    return found
   }
 
   // Мягко показать то, что играется: при открытии попапа прокрутить список
   // к текущей строке, чтобы она была не где-то за экраном.
   property bool scrollPending: false
 
+  // Показать играющий трек. Ключевое: список НЕ центрируется при каждой смене
+  // трека — он дёргался так раз за переход. Правило: если строка целиком в
+  // окне, не трогаем список вообще; если вышла — ставим её в середину.
   function scrollToCurrent() {
-    if (!root.activePlayer) return
-    const title = root.activePlayer.trackTitle
-    if (!title) return
-    const artist = root.activePlayer.trackArtist || ""
     const list = root.playlist
-    let idx = -1
-    for (let i = 0; i < list.length; i++) {
-      if (list[i].title === title && (list[i].artist || "") === artist) { idx = i; break }
-    }
-    if (idx < 0) return
-    // Высоты считаем арифметикой: строки одного роста плюс отступ в колонке.
-    const target = idx * (Style.space(38) + Style.space(1)) + Style.space(19) - trackFlick.height * 0.5
-    trackFlick.contentY = Math.max(0, Math.min(target, Math.max(0, trackFlick.contentHeight - trackFlick.height)))
+    // Та же строка, что подсвечена: по id от моста, иначе — по currentPlaylistRow
+    // (уникальное совпадение по тегам). Отдельный поиск «первого по тегам» здесь
+    // прокручивал бы не к тому треку при дублях названий.
+    const idx = root.currentPlaylistRow
+    if (idx < 0 || idx >= list.length) return
+
+    // Геометрия строки считается арифметикой: все строки одного роста плюс
+    // отступ в колонке. Список — Flickable, поэтому contentY двигаем руками.
+    const rowH = Style.space(38) + Style.space(1)
+    const rowTop = idx * rowH
+    const rowBottom = rowTop + Style.space(38)
+    const viewTop = trackFlick.contentY
+    const viewBottom = viewTop + trackFlick.height
+
+    // Строка в окне целиком — самое частое дело при переходах Next/Prev,
+    // и именно этот случай обязан быть тихим.
+    if (rowTop >= viewTop && rowBottom <= viewBottom) return
+
+    // Вышла за окно — ставим в середину, а не «впритык к краю». Прижим к краю
+    // хуже: следующий соседний трек тут же снова оказывается за границей, и
+    // список ползёт за каждым треком (проверено: 11 сдвигов на 11 переходов
+    // против 3 с центрированием). В середине окна остаётся запас соседей
+    // сверху и снизу, поэтому переходы внутри экрана список не трогают.
+    const center = rowTop - Math.floor((trackFlick.height - Style.space(38)) / 2)
+    const maxY = Math.max(0, trackFlick.contentHeight - trackFlick.height)
+    trackFlick.contentY = Math.max(0, Math.min(center, maxY))
   }
 
   // ── CRUD библиотеки из попапа ─────────────────────────────────────────────
@@ -581,7 +612,12 @@ BarWidget {
     if (libraryLoading) return
     libraryLoading = true
     const xhr = new XMLHttpRequest()
-    xhr.open("GET", `${server}/tracks?limit=200&sort=album&order=asc`)
+    // sort=title — та же база, что берёт мост (QUEUE_PARAMS). Раньше здесь стоял
+    // sort=album, и это был корень «Next уходит не туда»: сервер отдавал два
+    // разных порядка, а мост поверх своего ещё раз сортировал в JS — списки
+    // расходились по знакам препинания, и позиция играющего не совпадала с
+    // позицией нарисованной строки.
+    xhr.open("GET", `${server}/tracks?limit=200&sort=title&order=asc`)
     xhr.onreadystatechange = function() {
       if (xhr.readyState !== 4) return
       libraryLoading = false
@@ -602,8 +638,10 @@ BarWidget {
     // Поле поиска сразу в фокусе: попап открыт клавиатурно-занятым grab'ом,
     // первый клик по нему иногда теряется — не заставляю жалиться дважды.
     if (filterField) filterField.forceActiveFocus()
-    // Мост мог перезалиться, пока попап был закрыт — напомним свой вид.
+    // Мост мог перезалиться, пока попап был закрыт — напомним свой вид
+    // и уточним, что играет: за время закрытия попапа он мог смениться.
     notifyQueueSort()
+    requestNow()
   } else {
     // Возвращение к списку — не оставить висеть открытое меню сортировки.
     sortMenuOpen = false
@@ -611,9 +649,13 @@ BarWidget {
   onLibraryChanged: if (scrollPending) { scrollPending = false; openScrollTimer.restart() }
 
   // Когда сменился текущий трек при открытом попапе — подтянуть список к нему.
-  readonly property string currentTrackKey: activePlayer
-    ? ((activePlayer.trackTitle || "") + "|" + (activePlayer.trackArtist || ""))
-    : ""
+  // Ключ ведём по id от моста: у дублей с одинаковыми тегами title+artist не
+  // меняется при переходе, и автоскролл бы молчал.
+  readonly property string currentTrackKey: bridgeTrackId !== ""
+    ? bridgeTrackId
+    : (activePlayer
+      ? ((activePlayer.trackTitle || "") + "|" + (activePlayer.trackArtist || ""))
+      : "")
   onCurrentTrackKeyChanged: if (popupOpen) openScrollTimer.restart()
   Timer {
     id: openScrollTimer
@@ -651,7 +693,7 @@ BarWidget {
             return
           }
           if (ev && ev.event === "played") {
-            if (!root.popupOpen || root.sortIndex !== 2 || root.sortMenuOpen) return
+            if (!root.popupOpen || root.sortIndex !== 1 || root.sortMenuOpen) return
             console.log("плейлист: пуш 'played' получен")
             root.loadLibrary()
           }
@@ -669,14 +711,39 @@ BarWidget {
   // Канал «какой вид сортировки выбран» → мост: строка "mode [asc|desc]".
   // Мост пересортирует очередь теми же ключами, что и список — next идёт
   // по видимому порядку. Reconnect как у push: мост мог перезапуститься.
+  //
+  // Сокет двусторонний: мост шлёт обратно "now <id>" при каждой смене трека.
+  // Это единственный способ узнать id играющего — у MprisPlayer в Quickshell
+  // нет trackId, а artUrl есть не у всех треков.
   Socket {
     id: sortSock
     path: Quickshell.env("XDG_RUNTIME_DIR") + "/music-lib-sort.sock"
-    onConnectedChanged: if (!connected) sortReconnect.restart()
-    Component.onCompleted: {
-      connected = true
-      notifyQueueSort()
+    parser: SplitParser {
+      splitMarker: "\n"
+      onRead: function(data) {
+        const line = String(data).trim()
+        if (line.startsWith("now ")) {
+          const id = line.slice(4).trim()
+          root.bridgeTrackId = /^[0-9a-f]{64}$/.test(id) ? id : ""
+          console.warn("media: now=", root.bridgeTrackId.slice(0, 8), "row=", root.currentPlaylistRow, "len=", root.playlist.length)
+          return
+        }
+        // Мусор в обратном канале игнорируем: наш sort-режим туда не пишется.
+      }
     }
+    // connected=true — асинхронная операция, поэтому спросить «now» надо именно
+    // здесь, в Connected: в Component.onCompleted сокет ещё не поднят, и запрос
+    // ушёл бы в никуда. announceNow приходит только при СМЕНЕ трека, так что
+    // без этого запроса виджет, поднятый при уже играющем треке, id не узнает.
+    onConnectedChanged: {
+      if (connected) {
+        notifyQueueSort()
+        requestNow()
+      } else {
+        sortReconnect.restart()
+      }
+    }
+    Component.onCompleted: connected = true
   }
 
   Timer {
@@ -685,10 +752,24 @@ BarWidget {
     onTriggered: sortSock.connected = true
   }
 
+  function requestNow() {
+    if (!sortSock || !sortSock.connected) { sortReconnect.restart(); return }
+    try { sortSock.write("now\n") } catch (e) {
+      console.warn("media: не удалось спросить now:", e)
+    }
+  }
+
   function notifyQueueSort() {
     if (!sortSock || !sortSock.connected) { sortReconnect.restart(); return }
-    const names = ["title", "artist", "recent", "newest"]
-    const mode = names[root.sortIndex] ?? "album"
+    // Порядок здесь обязан совпадать с sortLabels и с индексами sortIndex
+    // (0 Title, 1 Recent, 2 Newest), а также с QUEUE_SORT_MODES в мосте.
+    // Держать это в трёх местах — источник рассинхрона, поэтому менять
+    // приходится сразу во всех; лишний элемент здесь тихо шёл бы мосту
+    // не тем режимом, что нарисован на экране.
+    const names = ["title", "recent", "newest"]
+    // Фоллбэк — title, а не album: режима album больше нет ни здесь, ни в
+    // мосте (QUEUE_SORT_MODES), и такой запрос он бы просто проигнорировал.
+    const mode = names[root.sortIndex] ?? "title"
     try {
       sortSock.write(mode + (root.orderDesc ? " desc" : " asc") + "\n")
     } catch (e) {
@@ -703,7 +784,7 @@ BarWidget {
     id: recentPollTimer
     interval: 15000
     repeat: true
-    running: root.popupOpen && root.isOurPlayer && root.sortIndex === 2 && !root.sortMenuOpen
+    running: root.popupOpen && root.isOurPlayer && root.sortIndex === 1 && !root.sortMenuOpen
     onTriggered: root.loadLibrary()
   }
   // Реконнект push-сокета: сервер мог рестартнуться (или файл-сокет
@@ -1469,18 +1550,22 @@ BarWidget {
               required property var modelData
               required property int index
 
-              // Подсветка «сейчас играет»: матч по title+artist, но при
-              // дублях (одинаковые теги, разные издания/файлы) горит ТОЛЬКО
-              // первая строка — root.currentPlaylistRow считает её один раз.
+              // Подсветка «сейчас играет»: currentPlaylistRow уже решил, какая
+              // строка текущая (по id от моста, иначе по уникальным тегам) —
+              // здесь только раскраска.
               readonly property bool isCurrent: root.currentPlaylistRow === index
 
-              // В режиме «недавно прослушанные» к строке добавляется штамп:
-              // сервер хранит время в UTC-ISO, Date его читает как UTC —
-              // и форматирует уже в местном времени, без секунд.
-              readonly property string lastPlayedLabel: root.sortIndex === 2
-                && modelData.lastPlayed
-                ? Qt.formatDateTime(new Date(modelData.lastPlayed), "dd.MM.yy HH:mm")
-                : ""
+              // Штамп к строке в режимах, где сортировка идёт по времени: «Recent» —
+              // когда последний раз слушали, «Newest» — когда залили. Без него
+              // порядок Newest выглядит случайным: названия-то у всех разные,
+              // а что именно сортирует — видно только по дате. Сервер хранит
+              // время в UTC-ISO, Date читает его как UTC и форматирует уже в
+              // местном времени, без секунд.
+              readonly property string stampLabel: {
+                const raw = root.sortIndex === 1 ? modelData.lastPlayed
+                  : root.sortIndex === 2 ? modelData.createdAt : null
+                return raw ? Qt.formatDateTime(new Date(raw), "dd.MM.yy HH:mm") : ""
+              }
 
               readonly property real pad: Style.space(6)
 
@@ -1540,8 +1625,8 @@ BarWidget {
                   Text {
                     textFormat: Text.PlainText
                     text: (modelData.artist || "")
-                      + (lastPlayedLabel !== ""
-                        ? (modelData.artist ? " • " : "") + lastPlayedLabel : "")
+                      + (stampLabel !== ""
+                        ? (modelData.artist ? " • " : "") + stampLabel : "")
                     color: Qt.darker(root.bar.foreground, 1.4)
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.caption
@@ -1606,7 +1691,7 @@ BarWidget {
         visible: !root.uploadPanelOpen && root.isOurPlayer && root.library.length > 0 && root.playlist.length === 0 && root.editingTrack === null
         width: parent.width
         textFormat: Text.PlainText
-        text: root.sortIndex === 2 && filterField.text.trim() === ""
+        text: root.sortIndex === 1 && filterField.text.trim() === ""
           ? "nothing played yet" : "nothing found"
         color: Qt.darker(root.bar.foreground, 1.6)
         font.family: root.bar.fontFamily

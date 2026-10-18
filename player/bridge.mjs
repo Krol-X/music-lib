@@ -41,8 +41,15 @@ const SORT_SOCKET_PATH =
   process.env.MUSICLIB_SORT ??
   `${process.env.XDG_RUNTIME_DIR ?? "/run/user/1000"}/music-lib-sort.sock`;
 
-/** Режимы сортировки очереди; album — прежнее поведение до подключения виджета. */
-const QUEUE_SORT_MODES = ["album", "title", "artist", "recent", "newest"];
+/**
+ * Режимы сортировки очереди. Ровно те же три, что в меню виджета, и в том же
+ * порядке — иначе Next пошёл бы не по тому списку, который нарисован.
+ * Режимов album/artist здесь нет намеренно: они тянули за собой расхождение с
+ * виджетом (составной ключ по album, разные базы у сервера), из-за чего Next
+ * уходил не на ту строку. Фильтры по альбому/исполнителю планируются отдельной
+ * штукой, как на сайтах, и не должны влиять на порядок очереди.
+ */
+const QUEUE_SORT_MODES = ["title", "recent", "newest"];
 
 /**
  * Состояние плеера переживает рестарт юнита: сюда на SIGTERM пишется
@@ -98,8 +105,10 @@ const state = {
   durationSec: null,
   volume: 100,    // mpv-шкала 0..100; в MPRIS отдаётся 0..1
   loop: "Playlist", // None | Track | Playlist; очередь крутится у нас самих
-  shuffle: false,  // mpv перемешал очередь: album/asc вернуть может рестарт
-  queueSort: { mode: "album", desc: false }, // режим виджета через sort-сокет
+  shuffle: false,  // mpv перемешал очередь: title/asc вернуть может рестарт
+  // Дефолт обязан совпадать с первым пунктом меню виджета (Title/asc), иначе
+  // до первого сообщения от виджета Next шёл бы не по тому списку, что виден.
+  queueSort: { mode: "title", desc: false }, // режим виджета через sort-сокет
   listenedSec: 0, // непрерывное звучание текущего трека, тикает только при play
   playedReported: false, // факт этого трека уже ушёл на сервер (живой штамп)
   announcedLengthSec: 0, // какая длина уже ушла в Metadata (чтобы не слать заново)
@@ -308,6 +317,7 @@ async function transition(index, pause) {
   state.listenedSec = 0; // новый трек — новый счёт
   state.playedReported = false;
   rebuildMetadata();
+  announceNow(); // id уехал виджету: подсветка строки идёт по нему, не по тегам
   await Promise.all([
     mpv.command(["loadfile", url(item.id), "replace"]),
     mpv.command(["set_property", "pause", pause]),
@@ -377,23 +387,38 @@ function orderTracks(tracks) {
     if (bEmpty) return -1;
     return flip(String(a).localeCompare(String(b)));
   };
+  // Последний ключ ВСЕГДА id — как и в QML. У библиотеки полно треков с
+  // одинаковыми тегами (разные рипы одного альбома), и без явного tie-break
+  // их взаимный порядок — случайность Array.sort: Next «прыгал» между
+  // ними. Направление сортировки пользователя сюда не доходит намеренно —
+  // внутри группы по названию, а не наоборот.
+  const cmpId = (a, b) => {
+    if (!a || !b || !a.id || !b.id || a.id === b.id) return 0;
+    return String(a.id) < String(b.id) ? -1 : 1;
+  };
+
+  // «Недавно прослушанные» у виджета — это ФИЛЬТР, а не только порядок:
+  // непрослушанные треки там вообще не показываются. Здесь они только
+  // уезжали в конец, из-за чего очередь (200 треков) не совпадала с нарисованным
+  // списком (у нас их 15 из 216), и Next играл то, чего в попапе нет. Поэтому
+  // фильтруем так же, как QML: без lastPlayed в «Recent» не идёт ничего.
+  if (state.queueSort.mode === "recent") {
+    tracks = tracks.filter((t) => t.lastPlayed);
+    if (tracks.length === 0) return tracks;
+  }
 
   switch (state.queueSort.mode) {
     case "title":
+      // Все текстовые ключи через cmpText, а не голый localeCompare: только
+      // так работает переворот направления (desc) и одинаковая обработка
+      // пустых значений, что и в QML. Голый localeCompare не flip'ился и
+      // при desc продолжал сортировать artist/album по возрастанию.
       tracks.sort((a, b) => (
         cmpText(a.title || a.filename, b.title || b.filename)
-        || String(a.artist || "").localeCompare(String(b.artist || ""))
-        || String(a.album || "").localeCompare(String(b.album || ""))
-        || num(a.trackNo) - num(b.trackNo)
-      ));
-      break;
-    case "artist":
-      tracks.sort((a, b) => (
-        cmpText(a.artist, b.artist)
+        || cmpText(a.artist, b.artist)
         || cmpText(a.album, b.album)
-        || num(a.discNo) - num(b.discNo)
         || num(a.trackNo) - num(b.trackNo)
-        || cmpText(a.title || a.filename, b.title || b.filename)
+        || cmpId(a, b)
       ));
       break;
     case "recent":
@@ -402,22 +427,28 @@ function orderTracks(tracks) {
         const bPlayed = b.lastPlayed ? 1 : 0;
         if (aPlayed !== bPlayed) return bPlayed - aPlayed; // nulls always at the end
         return flip(String(a.lastPlayed || "").localeCompare(String(b.lastPlayed || "")))
-          || cmpText(a.title || a.filename, b.title || b.filename);
+          || cmpText(a.title || a.filename, b.title || b.filename)
+          || cmpId(a, b);
       });
       break;
     case "newest":
       tracks.sort((a, b) => (
         cmpText(a.createdAt, b.createdAt)
         || cmpText(a.title || a.filename, b.title || b.filename)
+        || cmpId(a, b)
       ));
       break;
-    default: // album
+    // default: title. Раньше здесь жил album-режим (artist→album→disc→track),
+    // но он давал порядок, не совпадающий с нарисованным в виджете, — отсюда
+    // Next уходил не туда. Режима album больше нет и в списке для сокета, так
+    // что сюда попасть может только title; явный default подстраховывает от
+    // мусора в сокете и не даёт упасть на пустой сортировке.
+    default:
       tracks.sort((a, b) => (
-        cmpText(a.artist, b.artist)
+        cmpText(a.title || a.filename, b.title || b.filename)
+        || cmpText(a.artist, b.artist)
         || cmpText(a.album, b.album)
-        || num(a.discNo) - num(b.discNo)
         || num(a.trackNo) - num(b.trackNo)
-        || cmpText(a.title || a.filename, b.title || b.filename)
       ));
   }
   return tracks;
@@ -542,6 +573,7 @@ mpv.onEvent(function onEventMsg(msg) {
       } else {
         state.loaded = false;
         state.durationSec = null;
+        announceNow(); // пустой id: играть нечего — подсветка в виджете снимается
         changes({ PlaybackStatus: playbackStatus() });
       }
       break;
@@ -550,9 +582,9 @@ mpv.onEvent(function onEventMsg(msg) {
       state.playing = false;
       state.durationSec = null;
       // idle бывает и после простоя, и после честного конца очереди (None):
-      // idle бывает и после простоя, и после честного конца очереди (None):
       // счётчик либо общий ноль, либо недоигранный хвост — оба признаёт reportPlayed.
       void reportPlayed();
+      announceNow();
       changes({ PlaybackStatus: playbackStatus() });
       break;
   }
@@ -744,17 +776,56 @@ try {
   // не было
 }
 
+/**
+ * Клиенты sort-сокета: виджет шлёт нам режим сортировки, а мы шлём обратно
+ * "now <id>" — по другому каналу виджет id играющего трека не узнает:
+ * mpris:trackid Quickshell в QML не пробрасывает, а mpris:artUrl есть не у
+ * каждого трека. Без id подсветка строки на дублях названий садится на первую.
+ */
+const sortClients = new Set();
+
+/** id играющего трека; пустая строка — не играет ничего. */
+function currentId() {
+  const item = state.tracks[state.index];
+  return item ? item.id : "";
+}
+
+/** Рассылает текущий id всем подключённым виджетам. */
+function announceNow() {
+  const line = `now ${currentId()}\n`;
+  for (const sock of sortClients) {
+    try {
+      sock.write(line);
+    } catch {
+      sortClients.delete(sock);
+    }
+  }
+}
+
 try {
   Bun.listen({
     unix: SORT_SOCKET_PATH,
     socket: {
-      open: () => {},
-      close: () => {},
-      error: () => {},
-      data: (_sock, chunk) => {
+      // Состояние шлём СРАЗУ на connect: виджет ведь мог подняться, когда трек
+      // уже играл, и до следующей смены announceNow не сработает. Ответ на
+      // явный "now" остаётся страховкой, но полагаться только на него нельзя —
+      // виджет успевает дописать запрос не всегда.
+      open: (sock) => {
+        sortClients.add(sock);
+        try { sock.write(`now ${currentId()}\n`); } catch { /* dead */ }
+      },
+      close: (sock) => { sortClients.delete(sock); },
+      error: (sock) => { sortClients.delete(sock); },
+      data: (sock, chunk) => {
         const line = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
         for (const one of line.split("\n")) {
           const parts = one.trim().split(/\s+/);
+          if (parts[0] === "now") {
+            // Виджет спрашивает текущее состояние (например, только поднялся):
+            // отвечаем сразу, не дожидаясь следующей смены трека.
+            try { sock.write(`now ${currentId()}\n`); } catch { /* dead */ }
+            continue;
+          }
           if (parts[0] === "" || !QUEUE_SORT_MODES.includes(parts[0])) continue;
           state.queueSort = { mode: parts[0], desc: parts[1] === "desc" };
           console.log("queue sort:", state.queueSort.mode, state.queueSort.desc ? "desc" : "asc");
