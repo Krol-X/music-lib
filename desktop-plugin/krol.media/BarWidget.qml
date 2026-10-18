@@ -145,26 +145,28 @@ BarWidget {
   property bool editError: false
 
   property bool uploadBusy: false
-  // Очередь: {path, name, state: pending|uploading|ok|fail, pct}.
-  // Проценты ТЕКУЩЕГО файла берутся из uploadPct — не перегенерируем
-  // массив на каждый тик, Repeater перечитывает биндинг сам.
+  // Очередь: {path, name, state: pending|uploading|ok|fail, pct, resp}.
+  // Проценты теперь РАСТУТ внутри каждого элемента: воркеров трое — маркер
+  // p:NN% идёт вперемешку, перегенерация массива только на смене состояния.
+  // resp — последняя строка {} от сервера (параллельно глобальной не живут).
   property var uploadItems: []
   property int uploadOk: 0
   property int uploadFail: 0
-  property real uploadPct: 0
+  // Параллелизм 3: пока конвертируется один, следующий заливается.
+  property int uploadParallel: 3
   // Первая ошибка заливки попадает в итог — иначе она тонет за статусом.
   property string uploadLastError: ""
   // Панель прогресса на месте списка треков; открывается на время заливки.
   property bool uploadPanelOpen: false
   property bool uploadCancelled: false
-  property string uploadResponse: ""
-  // Сводный прогресс очереди: готовые файлы + доля текущего. Отдельная
+  // Сводный прогресс очереди: готовые файлы + доли бегущих. Отдельная
   // полоска + счётчик в шапке панели; общий статус в попапе не трогаем.
   readonly property real uploadFrac: {
     const total = Math.max(1, uploadItems.length)
-    const running = uploadItems.findIndex(function(it) { return it.state === "uploading" })
-    const add = running >= 0 ? uploadPct / 100 : 0
-    return Math.min(1, (uploadOk + uploadFail + add) / total)
+    var done = uploadOk + uploadFail
+    for (let i = 0; i < uploadItems.length; i++)
+      if (uploadItems[i].state === "uploading") done += (uploadItems[i].pct ?? 0) / 100
+    return Math.min(1, done / total)
   }
   readonly property string uploadSummary: {
     const n = uploadItems.length
@@ -271,9 +273,7 @@ BarWidget {
     }
     uploadOk = 0
     uploadFail = 0
-    uploadPct = 0
     uploadCancelled = false
-    uploadResponse = ""
     uploadLastError = ""
     uploadBusy = true
     uploadItems = paths.map(function(p) {
@@ -283,28 +283,33 @@ BarWidget {
     uploadPanelOpen = true
     // Попап возвращаем сразу — панель прогресса живёт там.
     popupOpen = true
-    uploadNext()
+    pumpUpload()
   }
 
-  Process {
-    id: uploadProc
+  // Воркер заливки: один Process + его строка очереди. Инстансов три —
+  // пока у моста/ffmpeg конвертируется файл, остальные доливаются дальше;
+  // ffmpeg и так одиночные процессы у сервера, узких мест не создаёт.
+  component UploadWorker: Process {
+    // Строка очереди, за которую воркер жив; -1 — свободен/закончил.
+    property int itemId: -1
     stdout: SplitParser {
       splitMarker: "\n"
-      onRead: function(data) {
-        const line = String(data).trim()
-        if (line.startsWith("{")) {
-          root.uploadResponse = line
-          return
-        }
-        const m = line.match(/^p:(\d+)%$/)
-        if (m) root.uploadPct = Number(m[1])
-      }
+      onRead: function(data) { root.uploadLine(itemId, data) }
     }
     stderr: StdioCollector {
       onStreamFinished: if (text !== "") console.warn("media: uploader stderr:", text)
     }
-    onRunningChanged: if (!running) root.uploadDone()
+    onRunningChanged: if (!running && itemId >= 0) {
+      const id = itemId
+      itemId = -1
+      root.uploadFinished(id)
+    }
   }
+
+  UploadWorker { id: uploadWorkerA }
+  UploadWorker { id: uploadWorkerB }
+  UploadWorker { id: uploadWorkerC }
+  readonly property var uploadWorkers: [uploadWorkerA, uploadWorkerB, uploadWorkerC]
 
   function markItem(i, state) {
     const items = uploadItems.slice()
@@ -312,51 +317,84 @@ BarWidget {
     uploadItems = items
   }
 
-  function uploadNext() {
-    let idx = -1
-    for (let i = 0; i < uploadItems.length; i++) {
-      if (uploadItems[i].state === "pending") { idx = i; break }
+  function uploadLine(itemId, data) {
+    const line = String(data).trim()
+    if (line === "") return
+    if (line.startsWith("{")) {
+      const items = uploadItems.slice()
+      items[itemId] = Object.assign({}, items[itemId], { resp: line })
+      uploadItems = items
+      return
     }
-    if (idx === -1) {
+    const m = line.match(/^p:(\d+)%$/)
+    if (m) {
+      const items = uploadItems.slice()
+      items[itemId] = Object.assign({}, items[itemId], { pct: Number(m[1]) })
+      uploadItems = items
+    }
+  }
+
+  function pumpUpload() {
+    var active = false
+    for (let w = 0; w < uploadWorkers.length; w++) {
+      const wk = uploadWorkers[w]
+      if (wk.running) { active = true; continue }
+      const idx = uploadItems.findIndex(function(it) { return it.state === "pending" })
+      if (idx === -1) break
+      const items = uploadItems.slice()
+      items[idx] = Object.assign({}, items[idx], { state: "uploading", pct: 0, resp: "" })
+      uploadItems = items
+      console.warn("media: uploader run:", root.uploaderPath, "|", uploadItems[idx].path)
+      wk.itemId = idx
+      wk.command = ["python3", root.uploaderPath, uploadItems[idx].path, root.server]
+      wk.running = true
+      active = true
+    }
+    if (!active) {
       uploadBusy = false
       loadLibrary()
       // Панель остаётся открытой — пользователь пробежит глазами ✓/✕
       // и закроет сам (кнопка переключается в "done").
-      return
     }
-    markItem(idx, "uploading")
-    uploadPct = 0
-    uploadResponse = ""
-    console.warn("media: uploader run:", root.uploaderPath, "|", uploadItems[idx].path)
-    uploadProc.command = ["python3", root.uploaderPath, uploadItems[idx].path, root.server]
-    uploadProc.running = true
   }
 
-  function uploadDone() {
-    if (uploadCancelled) return
-    const idx = uploadItems.findIndex(function(it) { return it.state === "uploading" })
+  function uploadFinished(itemId) {
+    // Отмена или конец пачки: бегущие воркеры долетели после kill —
+    // перезапуск очереди здесь был бы воскрешением отменённой заливки.
+    if (!uploadBusy) return
+    const it = uploadItems[itemId]
     let ok = false
     let msg = "server did not respond"
     try {
-      const r = JSON.parse(root.uploadResponse)
+      const r = JSON.parse(it.resp ?? "")
       if (r && (r.success || r.existed)) { ok = true; uploadOk++ }
       else msg = r.error || "server refused"
     } catch (e) {
-      msg = "bad server response: " + String(root.uploadResponse).slice(0, 60)
+      msg = "bad server response: " + String(it.resp ?? "").slice(0, 60)
     }
-    if (idx >= 0) markItem(idx, ok ? "ok" : "fail")
+    markItem(itemId, ok ? "ok" : "fail")
     if (!ok) { uploadFail++; uploadLastError = msg; editStatus = msg; editError = true }
-    uploadNext()
+    pumpUpload()
   }
 
   function uploadCancel() {
     if (!uploadBusy) return
     uploadCancelled = true
-    uploadProc.running = false
-    const uploading = uploadItems.filter(function(it) { return it.state === "uploading" }).length
-    const pending = uploadItems.filter(function(it) { return it.state === "pending" }).length
     uploadBusy = false
-    uploadPct = 0
+    // Убить всех бегущих: Process.running=false у Quickshell — SIGTERM.
+    // Их строки честно помечаем fail("cancelled"), чтобы панель не несла
+    // мёртвые «стрелки».
+    for (let w = 0; w < uploadWorkers.length; w++) {
+      const wk = uploadWorkers[w]
+      if (wk.running) {
+        if (wk.itemId >= 0) markItem(wk.itemId, "fail")
+        wk.itemId = -1
+        wk.running = false
+      }
+    }
+    // pending остаются в панели — пользователь решает (clear all уберёт).
+    uploadLastError = "cancelled"
+    editStatus = "upload cancelled"
   }
 
   // Чистка панели: null — вычистить всё, массив state — только эти строки.
@@ -1145,14 +1183,14 @@ BarWidget {
 
                 Text {
                   textFormat: Text.PlainText
-                  readonly property real pct: modelData.state === "uploading" ? root.uploadPct
+                  readonly property real pct: modelData.state === "uploading" ? (modelData.pct ?? 0)
                     : modelData.state === "ok" ? 100
                     : modelData.state === "fail" ? 0
                     : 0
                   // Байты дошли до 100%, но сервер ещё конвертирует и пишет
                   // базу — до ответа это не «готово», а конвертация.
                   text: modelData.state === "uploading"
-                    ? (root.uploadPct < 100 ? root.uploadPct + "%" : "converting…")
+                    ? ((modelData.pct ?? 0) < 100 ? (modelData.pct ?? 0) + "%" : "converting…")
                     : modelData.state === "ok" ? "✓"
                     : modelData.state === "fail" ? "✕" : "—"
                   color: modelData.state === "fail" ? Commons.Color.accent
