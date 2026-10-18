@@ -114,15 +114,29 @@ BarWidget {
     return items
   }
 
-  // Индекс единственной подсвечиваемой строки: первый матч «сейчас играет»
-  // по title+artist в текущем виде списка. Дубли (одинаковые теги) горят
-  // только один раз — первая строка, остальные нейтральны.
+  // Уникальный ключ играющего трека: мост кладёт в mpris:artUrl путь вида
+  // /cover/<id>.<ext>, а id трека уникален в БД. Теги (title+artist) —
+  // только запасной матч для треков без обложки.
+  readonly property string currentTrackId: {
+    if (!root.activePlayer) return ""
+    const m = String(root.activePlayer.trackArtUrl ?? "")
+      .match(/\/cover\/([0-9a-f]{64})(?:$|\?|\.)/)
+    return m ? m[1] : ""
+  }
+
+  // Индекс единственной подсвечиваемой строки: точный матч по id, а при
+  // отсутствии обложки — первый матч «сейчас играет» по title+artist.
   readonly property int currentPlaylistRow: {
     if (!root.activePlayer) return -1
+    const lib = root.playlist
+    if (root.currentTrackId !== "") {
+      for (let i = 0; i < lib.length; i++)
+        if (String(lib[i].coverUrl ?? "").indexOf(root.currentTrackId) !== -1) return i
+    }
     const t = root.activePlayer.trackTitle ?? ""
     const a = root.activePlayer.trackArtist ?? ""
-    for (let i = 0; i < root.playlist.length; i++) {
-      const it = root.playlist[i]
+    for (let i = 0; i < lib.length; i++) {
+      const it = lib[i]
       if ((it.title ?? "") === t && (it.artist ?? "") === a) return i
     }
     return -1
