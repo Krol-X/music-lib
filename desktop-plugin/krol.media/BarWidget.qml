@@ -49,10 +49,13 @@ BarWidget {
   readonly property string sortLabel: sortLabels[sortIndex]
   property bool orderDesc: false
   readonly property var sortDefaultDesc: [false, false, false, true, true]
+  // «Селект» режима: меню выбора рисуется на месте плейлиста.
+  property bool sortMenuOpen: false
 
-  function cycleSort() {
-    sortIndex = (sortIndex + 1) % sortLabels.length
-    orderDesc = sortDefaultDesc[sortIndex]
+  function pickSort(i) {
+    sortIndex = i
+    orderDesc = sortDefaultDesc[i]
+    sortMenuOpen = false
   }
 
   function mmss(sec) {
@@ -316,6 +319,9 @@ BarWidget {
     // Поле поиска сразу в фокусе: попап открыт клавиатурно-занятым grab'ом,
     // первый клик по нему иногда теряется — не заставляю жалиться дважды.
     if (filterField) filterField.forceActiveFocus()
+  } else {
+    // Возвращение к списку — не оставить висеть открытое меню сортировки.
+    sortMenuOpen = false
   }
   onLibraryChanged: if (scrollPending) { scrollPending = false; openScrollTimer.restart() }
 
@@ -746,8 +752,8 @@ BarWidget {
           id: sortCycle
           height: parent.height
           text: root.sortLabel
-          foreground: root.bar.foreground
-          onClicked: root.cycleSort()
+          foreground: root.sortMenuOpen ? Commons.Color.accent : root.bar.foreground
+          onClicked: root.sortMenuOpen = !root.sortMenuOpen
         }
 
         // Направление текущего режима: ↑ алфавит/старые, ↓ обратно.
@@ -761,9 +767,35 @@ BarWidget {
         }
       }
 
+      // Меню режимов сортировки: обычного <select> в QML нет, а вложить
+      // в попап ещё одно popup-окно нельзя (окно привязывается только к
+      // панели), поэтому честный дропдаун рисуем на месте плейлиста:
+      // идёт выбор — список треков заменяется списком режимов.
+      Column {
+        id: sortMenu
+        visible: root.isOurPlayer && root.sortMenuOpen && root.editingTrack === null
+        width: parent.width
+        spacing: Style.space(4)
+
+        Repeater {
+          model: root.sortLabels
+          Button {
+            required property string modelData
+            required property int index
+            width: sortMenu.width
+            height: Style.space(34)
+            text: modelData + (root.sortIndex === index ? "  ✓" : "")
+            selected: root.sortIndex === index
+            foreground: root.bar.foreground
+            onClicked: root.pickSort(index)
+          }
+        }
+      }
+
       Flickable {
         id: trackFlick
         visible: root.isOurPlayer && root.playlist.length > 0 && root.editingTrack === null
+          && !root.sortMenuOpen
         width: parent.width
         height: Math.min(trackColumn.implicitHeight, Style.space(300))
         contentHeight: trackColumn.implicitHeight
