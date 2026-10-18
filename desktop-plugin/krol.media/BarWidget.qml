@@ -1037,44 +1037,90 @@ BarWidget {
           }
         }
 
-        TextField {
-          id: editTitle
+        // Подписи над полями: плейсхолдеры свои функции отдали. Поля, где
+        // пустое значение стирает метаданные, честно об этом говорят.
+        Column {
           width: parent.width
-          height: Style.space(28)
-          placeholderText: "title"
-          foreground: root.bar.foreground
-          font.family: root.bar.fontFamily
-          text: root.editingTrack ? (root.editingTrack.title || "") : ""
+          spacing: Style.space(2)
+
+          Text {
+            text: "title"
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          TextField {
+            id: editTitle
+            width: parent.width
+            height: Style.space(28)
+            foreground: root.bar.foreground
+            font.family: root.bar.fontFamily
+            text: root.editingTrack ? (root.editingTrack.title || "") : ""
+          }
         }
 
-        TextField {
-          id: editArtist
+        Column {
           width: parent.width
-          height: Style.space(28)
-          placeholderText: "artist (empty = clear)"
-          foreground: root.bar.foreground
-          font.family: root.bar.fontFamily
-          text: root.editingTrack ? (root.editingTrack.artist || "") : ""
+          spacing: Style.space(2)
+
+          Text {
+            text: "artist — empty clears"
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          TextField {
+            id: editArtist
+            width: parent.width
+            height: Style.space(28)
+            foreground: root.bar.foreground
+            font.family: root.bar.fontFamily
+            text: root.editingTrack ? (root.editingTrack.artist || "") : ""
+          }
         }
 
-        TextField {
-          id: editAlbum
+        Column {
           width: parent.width
-          height: Style.space(28)
-          placeholderText: "album (empty = clear)"
-          foreground: root.bar.foreground
-          font.family: root.bar.fontFamily
-          text: root.editingTrack ? (root.editingTrack.album || "") : ""
+          spacing: Style.space(2)
+
+          Text {
+            text: "album — empty clears"
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          TextField {
+            id: editAlbum
+            width: parent.width
+            height: Style.space(28)
+            foreground: root.bar.foreground
+            font.family: root.bar.fontFamily
+            text: root.editingTrack ? (root.editingTrack.album || "") : ""
+          }
         }
 
-        TextField {
-          id: editGenre
+        Column {
           width: parent.width
-          height: Style.space(28)
-          placeholderText: "genre (empty = clear)"
-          foreground: root.bar.foreground
-          font.family: root.bar.fontFamily
-          text: root.editingTrack ? (root.editingTrack.genre || "") : ""
+          spacing: Style.space(2)
+
+          Text {
+            text: "genre — empty clears"
+            color: Qt.darker(root.bar.foreground, 1.5)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+
+          TextField {
+            id: editGenre
+            width: parent.width
+            height: Style.space(28)
+            foreground: root.bar.foreground
+            font.family: root.bar.fontFamily
+            text: root.editingTrack ? (root.editingTrack.genre || "") : ""
+          }
         }
 
         // save слева, delete прижат к правому краю окна: Row не умеет
