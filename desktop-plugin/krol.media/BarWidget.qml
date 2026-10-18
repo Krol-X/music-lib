@@ -986,20 +986,23 @@ BarWidget {
           }
         }
 
-        // Тонкая полоска сводного прогресса очереди.
+        // Тонкая полоска сводного прогресса очереди; снизу вольный
+        // отступ, чтобы не липла к списку файлов.
         Item {
           width: parent.width
-          height: Style.space(5)
+          height: Style.space(11)
 
           Rectangle {
-            anchors.fill: parent
+            anchors { top: parent.top; left: parent.left; right: parent.right }
+            height: Style.space(5)
             radius: Style.space(2)
             color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.15)
           }
 
           Rectangle {
+            anchors { top: parent.top; left: parent.left }
             width: parent.width * root.uploadFrac
-            height: parent.height
+            height: Style.space(5)
             radius: Style.space(2)
             color: root.uploadBusy ? Commons.Color.accent : root.bar.foreground
             opacity: root.uploadBusy ? 1.0 : 0.5
