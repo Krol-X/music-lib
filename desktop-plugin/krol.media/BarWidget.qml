@@ -829,6 +829,14 @@ BarWidget {
                 && modelData.title === root.activePlayer.trackTitle
                 && modelData.artist === root.activePlayer.trackArtist
 
+              // В режиме «недавно прослушанные» к строке добавляется штамп:
+              // сервер хранит время в UTC-ISO, Date его читает как UTC —
+              // и форматирует уже в местном времени, без секунд.
+              readonly property string lastPlayedLabel: root.sortIndex === 3
+                && modelData.lastPlayed
+                ? Qt.formatDateTime(new Date(modelData.lastPlayed), "dd.MM HH:mm")
+                : ""
+
               readonly property real pad: Style.space(6)
 
               width: trackColumn.width
@@ -886,7 +894,9 @@ BarWidget {
 
                   Text {
                     textFormat: Text.PlainText
-                    text: modelData.artist || ""
+                    text: (modelData.artist || "")
+                      + (lastPlayedLabel !== ""
+                        ? (modelData.artist ? " • " : "") + lastPlayedLabel : "")
                     color: Qt.darker(root.bar.foreground, 1.4)
                     font.family: root.bar.fontFamily
                     font.pixelSize: Style.font.caption
