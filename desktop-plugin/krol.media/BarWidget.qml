@@ -254,10 +254,9 @@ BarWidget {
   function deleteTrack() {
     const t = editingTrack
     if (!t) return
+    // Подтверждение выражено самой кнопкой ("delete" → accent "really delete?").
     if (!confirmDelete) {
       confirmDelete = true
-      editError = true
-      editStatus = "track and files will be deleted for good — press again to confirm"
       return
     }
     confirmDelete = false
@@ -1065,7 +1064,7 @@ BarWidget {
           spacing: Style.space(2)
 
           Text {
-            text: "artist — empty clears"
+            text: "artist"
             color: Qt.darker(root.bar.foreground, 1.5)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -1086,7 +1085,7 @@ BarWidget {
           spacing: Style.space(2)
 
           Text {
-            text: "album — empty clears"
+            text: "album"
             color: Qt.darker(root.bar.foreground, 1.5)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -1107,7 +1106,7 @@ BarWidget {
           spacing: Style.space(2)
 
           Text {
-            text: "genre — empty clears"
+            text: "genre"
             color: Qt.darker(root.bar.foreground, 1.5)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
