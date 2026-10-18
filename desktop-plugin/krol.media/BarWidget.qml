@@ -55,6 +55,10 @@ BarWidget {
   // «Селект» режима: меню выбора рисуется на месте плейлиста.
   property bool sortMenuOpen: false
 
+  // Вид решает и порядок очереди моста: на любую смену — сообщение в мост.
+  onSortIndexChanged: notifyQueueSort()
+  onOrderDescChanged: notifyQueueSort()
+
   function pickSort(i) {
     sortIndex = i
     orderDesc = sortDefaultDesc[i]
@@ -557,7 +561,7 @@ BarWidget {
     if (libraryLoading) return
     libraryLoading = true
     const xhr = new XMLHttpRequest()
-    xhr.open("GET", `${server}/tracks?limit=500&sort=album&order=asc`)
+    xhr.open("GET", `${server}/tracks?limit=200&sort=album&order=asc`)
     xhr.onreadystatechange = function() {
       if (xhr.readyState !== 4) return
       libraryLoading = false
@@ -578,6 +582,8 @@ BarWidget {
     // Поле поиска сразу в фокусе: попап открыт клавиатурно-занятым grab'ом,
     // первый клик по нему иногда теряется — не заставляю жалиться дважды.
     if (filterField) filterField.forceActiveFocus()
+    // Мост мог перезалиться, пока попап был закрыт — напомним свой вид.
+    notifyQueueSort()
   } else {
     // Возвращение к списку — не оставить висеть открытое меню сортировки.
     sortMenuOpen = false
@@ -638,6 +644,36 @@ BarWidget {
     // Клиент коннектится сам при рождении; рестарт сервера закрывает
     // соединение и трогает reconnectTimer через onConnectedChanged.
     Component.onCompleted: connected = true
+  }
+
+  // Канал «какой вид сортировки выбран» → мост: строка "mode [asc|desc]".
+  // Мост пересортирует очередь теми же ключами, что и список — next идёт
+  // по видимому порядку. Reconnect как у push: мост мог перезапуститься.
+  Socket {
+    id: sortSock
+    path: Quickshell.env("XDG_RUNTIME_DIR") + "/music-lib-sort.sock"
+    onConnectedChanged: if (!connected) sortReconnect.restart()
+    Component.onCompleted: {
+      connected = true
+      notifyQueueSort()
+    }
+  }
+
+  Timer {
+    id: sortReconnect
+    interval: 5000
+    onTriggered: sortSock.connected = true
+  }
+
+  function notifyQueueSort() {
+    if (!sortSock || !sortSock.connected) { sortReconnect.restart(); return }
+    const names = ["title", "artist", "recent", "newest"]
+    const mode = names[root.sortIndex] ?? "album"
+    try {
+      sortSock.write(mode + (root.orderDesc ? " desc" : " asc") + "\n")
+    } catch (e) {
+      console.warn("media: sort-канал не отвечает:", e)
+    }
   }
 
   // Контрольный поллинг: сокет может чихнуть (рестарт сервера), редкий

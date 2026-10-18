@@ -18,6 +18,7 @@
 
 import dbus from "dbus-next";
 import { mkdir, rm } from "node:fs/promises";
+import { unlinkSync } from "node:fs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -31,7 +32,18 @@ const BUS_NAME = "org.mpris.MediaPlayer2.musiclib";
 const MPV_PATH = `${process.env.XDG_RUNTIME_DIR ?? "/run/user/1000"}/music-lib-player/mpv.sock`;
 
 /** Список треков: тот же порядок, что и в плейлисте плагина (альбом, внутри трек). */
-const QUEUE_PARAMS = "limit=500&sort=album&order=asc";
+/**
+ * Список треков: состав порядка решает ЖЕ виджет (music-lib-sort.sock):
+ * title/artist/recent/newest + направление. База — детерминированный
+ * title-asc, поверх идёт JS-пересортировка теми же ключами, что в QML.
+ */
+const QUEUE_PARAMS = "limit=200&sort=title&order=asc";
+const SORT_SOCKET_PATH =
+  process.env.MUSICLIB_SORT ??
+  `${process.env.XDG_RUNTIME_DIR ?? "/run/user/1000"}/music-lib-sort.sock`;
+
+/** Режимы сортировки очереди; album — прежнее поведение до подключения виджета. */
+const QUEUE_SORT_MODES = ["album", "title", "artist", "recent", "newest"];
 
 /**
  * Состояние плеера переживает рестарт юнита: сюда на SIGTERM пишется
@@ -88,6 +100,7 @@ const state = {
   volume: 100,    // mpv-шкала 0..100; в MPRIS отдаётся 0..1
   loop: "Playlist", // None | Track | Playlist; очередь крутится у нас самих
   shuffle: false,  // mpv перемешал очередь: album/asc вернуть может рестарт
+  queueSort: { mode: "album", desc: false }, // режим виджета через sort-сокет
   listenedSec: 0, // непрерывное звучание текущего трека, тикает только при play
   playedReported: false, // факт этого трека уже ушёл на сервер (живой штамп)
   announcedLengthSec: 0, // какая длина уже ушла в Metadata (чтобы не слать заново)
@@ -320,6 +333,7 @@ async function refreshQueue() {
     const body = await res.json();
     let tracks = body.items ?? [];
     if (tracks.length === 0) return;
+    tracks = orderTracks(tracks);
     if (state.shuffle) tracks = shuffleTracks(tracks, current);
     state.tracks = tracks;
     const i = current ? state.tracks.findIndex((t) => t.id === current.id) : -1;
@@ -344,6 +358,43 @@ function shuffleTracks(list, current) {
     [rest[i], rest[j]] = [rest[j], rest[i]];
   }
   return current ? [current, ...rest] : rest;
+}
+
+/**
+ * Те же компараторы, что у списка виджета (sortIndex/orderDesc в QML):
+ * очередь выглядит ровно как выбранный вид. Ключи из БД — проставленные
+ * сервером объекты, null-ы уходят в конец через num().
+ */
+function orderTracks(tracks) {
+  const num = (x) => (x === null || x === undefined ? 0 : Number(x));
+  const flip = (c) => (state.queueSort.desc ? -c : c);
+  switch (state.queueSort.mode) {
+    case "title":
+      tracks.sort((a, b) => flip(String(a.title || "").localeCompare(String(b.title || ""))));
+      break;
+    case "artist":
+      tracks.sort((a, b) => flip(
+        String(a.artist || "").localeCompare(String(b.artist || ""))
+        || String(a.album || "").localeCompare(String(b.album || ""))
+        || num(a.discNo) - num(b.discNo)
+        || num(a.trackNo) - num(b.trackNo),
+      ));
+      break;
+    case "recent":
+      tracks.sort((a, b) => flip(String(a.lastPlayed || "").localeCompare(String(b.lastPlayed || ""))));
+      break;
+    case "newest":
+      tracks.sort((a, b) => flip(String(a.createdAt || "").localeCompare(String(b.createdAt || ""))));
+      break;
+    default: // album
+      tracks.sort((a, b) => flip(
+        String(a.artist || "").localeCompare(String(b.artist || ""))
+        || String(a.album || "").localeCompare(String(b.album || ""))
+        || num(a.discNo) - num(b.discNo)
+        || num(a.trackNo) - num(b.trackNo),
+      ));
+  }
+  return tracks;
 }
 
 async function next(auto = false) {
@@ -641,6 +692,38 @@ PlayerInterface.configureMembers({
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+// ── сортировочный сокет: виджет ── мост ─────────────────────────────────────
+//
+// Quickshell не умеет задавать произвольные D-Bus-свойства, поэтому режим
+// «какой вид сортировки выбран» живёт отдельным unix-сокетом рядом с push.
+// Виджет пишет строку "mode [asc|desc]" на смену вида; мост пересортирует
+// очередь теми же ключами, что и список. До первого сообщения — album/asc.
+try {
+  unlinkSync(SORT_SOCKET_PATH);
+} catch {
+  // не было
+}
+
+Bun.listen({
+  unix: SORT_SOCKET_PATH,
+  socket: {
+    open: () => {},
+    close: () => {},
+    error: () => {},
+    data: (_sock, chunk) => {
+      const line = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+      for (const one of line.split("\n")) {
+        const parts = one.trim().split(/\s+/);
+        if (parts[0] === "" || !QUEUE_SORT_MODES.includes(parts[0])) continue;
+        state.queueSort = { mode: parts[0], desc: parts[1] === "desc" };
+        console.log("queue sort:", state.queueSort.mode, state.queueSort.desc ? "desc" : "asc");
+        // Пересборка на месте: играющий трек остаётся, «next» идёт по виду.
+        void refreshQueue();
+      }
+    },
+  },
+});
 
 /** Сервер может подниматься вместе со стартом юнита: подождать. */
 async function fetchTracks() {
