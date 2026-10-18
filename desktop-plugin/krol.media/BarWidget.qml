@@ -447,6 +447,18 @@ BarWidget {
         }
       }
     }
+
+    // Пустая библиотека: глиф плюс короткая подпись вместо мёртвого титула —
+    // строка щедрее на ширину и честно говорит, что играть нечего.
+    Text {
+      textFormat: Text.PlainText
+      anchors.verticalCenter: parent.verticalCenter
+      visible: root.emptyLib
+      text: "library is empty"
+      color: Qt.darker(root.bar.barForeground, 1.5)
+      font.family: root.bar.fontFamily
+      font.pixelSize: Style.font.bodySmall
+    }
   }
 
   MouseArea {
@@ -460,6 +472,10 @@ BarWidget {
       if (mouse.button === Qt.MiddleButton) {
         if (root.mediaService) root.mediaService.runAction("next", false)
       } else if (mouse.button === Qt.RightButton) {
+        root.popupOpen = !root.popupOpen
+      } else if (root.emptyLib) {
+        // Играть нечего: ЛКМ открывает попап (там же заливка «＋»),
+        // а не дёргает playPause по мёртвым метаданным.
         root.popupOpen = !root.popupOpen
       } else {
         if (root.mediaService) root.mediaService.runAction("playPause", false)
@@ -654,7 +670,7 @@ BarWidget {
         width: parent.width
         horizontalAlignment: Text.AlignHCenter
         textFormat: Text.PlainText
-        text: "library is empty — ＋ uploads tracks"
+        text: "library is empty"
         color: Qt.darker(root.bar.foreground, 1.4)
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.caption
