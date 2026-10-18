@@ -339,6 +339,16 @@ BarWidget {
     onTriggered: root.scrollToCurrent()
   }
 
+  // «Недавно прослушанные» живёт: мост шлёт штамп прямо на 30-й секунде
+  // звучания, а таймер, пока попап открыт в этом режиме, подслушивает
+  // сервер раз в полминуты — играющий трек всплывает вверх по-живому.
+  Timer {
+    interval: 30000
+    repeat: true
+    running: root.popupOpen && root.isOurPlayer && root.sortIndex === 3 && !root.sortMenuOpen
+    onTriggered: root.loadLibrary()
+  }
+
   // Quickshell не перетикает position сам: по докам заставляем его сигнал
   // руками, пока играет и попап открыт (иначе слайдер и время замирают
   // до следующего скачка позиции).

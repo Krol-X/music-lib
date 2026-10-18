@@ -88,6 +88,7 @@ const state = {
   volume: 100,    // mpv-шкала 0..100; в MPRIS отдаётся 0..1
   loop: "Playlist", // None | Track | Playlist; очередь крутится у нас самих
   listenedSec: 0, // непрерывное звучание текущего трека, тикает только при play
+  playedReported: false, // факт этого трека уже ушёл на сервер (живой штамп)
 };
 
 /** interface используется в обработчиках событий раньше своего создания. */
@@ -233,21 +234,34 @@ function setPaused(pause) {
 
 /**
  * Учёт прослушивания. Тик раз в секунду наращивает счётчик только пока
- * mpv реально играет (state.playing — «файл загружен и pause=false»):
- * пауза и простой не пачкают историю.
+ * mpv реально играет (state.playing — «файл загружен и pause=false»),
+ * и в тот же тик проверяет порог: штамп уходит на сервер сразу, пока
+ * трек ещё играет, — «недавно прослушанные» поднимает его по-живому,
+ * не дожидаясь перехода.
  */
 setInterval(() => {
-  if (state.loaded && state.playing) state.listenedSec++;
+  if (state.loaded && state.playing) {
+    state.listenedSec++;
+    void reportPlayed();
+  }
 }, 1000);
 
-/** Порог признания: 30 секунд реального звучания; проматывания и клики
- * по списку историю не портят. Сервер только штампует время и растит
- * счётчик — сортировка «по последнему прослушанному» живёт на нём. */
-function markPlayed() {
+const PLAY_THRESHOLD_SEC = 30;
+
+/** Долгий трек признаётся после 30 секунд звучания; короткий — если
+ * дослушан целиком (длительность из треков URL-списка, известна раньше
+ * и надёжнее, чем догадка mpv). Промотанные куски история не портят:
+ * без порога отсчёт не сойдётся. */
+function reportPlayed() {
   const item = state.tracks[state.index];
-  const sec = state.listenedSec;
-  state.listenedSec = 0; // счёт пер-трековый: даже сбой пинга копит заново
-  if (!item || sec < 30) return Promise.resolve();
+  if (!item || state.playedReported) return Promise.resolve();
+  const dur = item.durationSec ?? state.durationSec;
+  const complete =
+    typeof dur === "number" && dur > 0 && dur < PLAY_THRESHOLD_SEC &&
+    state.listenedSec >= Math.floor(dur);
+  if (state.listenedSec < PLAY_THRESHOLD_SEC && !complete) return Promise.resolve();
+  state.playedReported = true;
+  console.log(`* учёт: ${item.id.slice(0, 8)} прослушан (${state.listenedSec} с)`);
   return fetch(`${SERVER}/tracks/${item.id}/play`, {
     method: "POST",
     signal: AbortSignal.timeout(1500),
@@ -264,9 +278,11 @@ function markPlayed() {
 async function transition(index, pause) {
   const item = state.tracks[index];
   if (!item) return;
-  void markPlayed(); // признаём прослушанным то, что только что играло
+  void reportPlayed(); // признаём прослушанным то, что только что играло
   state.index = index;
   state.loaded = true;
+  state.listenedSec = 0; // новый трек — новый счёт
+  state.playedReported = false;
   rebuildMetadata();
   await Promise.all([
     mpv.command(["loadfile", url(item.id), "replace"]),
@@ -408,8 +424,9 @@ mpv.onEvent(function onEventMsg(msg) {
       state.playing = false;
       state.durationSec = null;
       // idle бывает и после простоя, и после честного конца очереди (None):
-      // счётчик либо общий ноль, либо недоигранный хвост — оба признаёт markPlayed.
-      void markPlayed();
+      // idle бывает и после простоя, и после честного конца очереди (None):
+      // счётчик либо общий ноль, либо недоигранный хвост — оба признаёт reportPlayed.
+      void reportPlayed();
       changes({ PlaybackStatus: playbackStatus() });
       break;
   }
@@ -498,7 +515,7 @@ class PlayerInterface extends Interface {
   }
 
   Stop() {
-    void markPlayed(); // остановка после дослушанных 30с — тоже факт
+    void reportPlayed(); // остановка после дослушанных порога — тоже факт
     state.loaded = false;
     state.positionSec = 0;
     setPlaying(false);
@@ -675,7 +692,7 @@ void superviseMpv();
 function shutdown() {
   void (async () => {
     console.log("* закрываюсь");
-    await markPlayed(); // дослушанный до выхода трек тоже штампуем
+    await reportPlayed(); // дослушанный до выхода трек тоже штампуем
     persistState();
     try {
       await bus.close();
