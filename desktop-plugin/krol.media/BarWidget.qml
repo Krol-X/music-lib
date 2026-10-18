@@ -350,6 +350,7 @@ BarWidget {
       wk.running = true
       active = true
     }
+    if (active) uploadFollow()
     if (!active) {
       uploadBusy = false
       loadLibrary()
@@ -378,6 +379,21 @@ BarWidget {
     markItem(idx, ok ? "ok" : "fail")
     if (!ok) { uploadFail++; uploadLastError = msg; editStatus = msg; editError = true }
     pumpUpload()
+  }
+
+  // Автопрокрутка панели заливки: следим за последним бегущим «→», чтобы
+  // конвейер из трёх воркеров всегда был в кадре длинной пачки.
+  readonly property real uploadRowPitch: Style.space(26) + Style.space(1)
+
+  function uploadFollow() {
+    if (!uploadBusy) return
+    var last = -1
+    for (let i = 0; i < uploadItems.length; i++)
+      if (uploadItems[i].state === "uploading") last = i
+    if (last === -1) return
+    const y = (last + 1) * uploadRowPitch - uploadRowsFlick.height + Style.space(4)
+    uploadRowsFlick.contentY = Math.max(0,
+      Math.min(uploadRowsFlick.contentHeight - uploadRowsFlick.height, y))
   }
 
   function uploadCancel() {
@@ -1146,6 +1162,7 @@ BarWidget {
         }
 
         Flickable {
+          id: uploadRowsFlick
           width: parent.width
           // Тот же потолок, что у плейлиста: пачки бывают десятками файлов,
           // без ограничения панель распахивает окно на весь экран.
