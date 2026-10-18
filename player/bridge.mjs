@@ -31,7 +31,7 @@ const BUS_NAME = "org.mpris.MediaPlayer2.musiclib";
 const MPV_PATH = `${process.env.XDG_RUNTIME_DIR ?? "/run/user/1000"}/music-lib-player/mpv.sock`;
 
 /** Список треков: тот же порядок, что и в плейлисте плагина (альбом, внутри трек). */
-const QUEUE_PARAMS = "limit=200&sort=album&order=asc";
+const QUEUE_PARAMS = "limit=500&sort=album&order=asc";
 
 /**
  * Состояние плеера переживает рестарт юнита: сюда на SIGTERM пишется

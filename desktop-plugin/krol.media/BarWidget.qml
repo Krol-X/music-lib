@@ -557,7 +557,7 @@ BarWidget {
     if (libraryLoading) return
     libraryLoading = true
     const xhr = new XMLHttpRequest()
-    xhr.open("GET", `${server}/tracks?limit=200&sort=album&order=asc`)
+    xhr.open("GET", `${server}/tracks?limit=500&sort=album&order=asc`)
     xhr.onreadystatechange = function() {
       if (xhr.readyState !== 4) return
       libraryLoading = false

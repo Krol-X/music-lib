@@ -109,7 +109,7 @@ const SORTABLE: Record<string, { column: string; nullable: boolean }> = {
 };
 
 export const DEFAULT_LIMIT = 50;
-export const MAX_LIMIT = 200;
+export const MAX_LIMIT = 500;
 
 function parseLimit(value: string | null | undefined): number {
   const parsed = Number.parseInt(value ?? "", 10);

@@ -211,7 +211,7 @@ describe("GET /tracks", () => {
 
   test("limit выше потолка ограничен", async () => {
     const { body } = await getJson("/tracks?limit=10000");
-    expect(body.limit).toBe(200);
+    expect(body.limit).toBe(500);
   });
 
   test("мусорные limit и offset не роняют", async () => {
