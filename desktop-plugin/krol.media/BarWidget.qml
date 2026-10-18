@@ -293,10 +293,26 @@ BarWidget {
     const uploading = uploadItems.filter(function(it) { return it.state === "uploading" }).length
     const pending = uploadItems.filter(function(it) { return it.state === "pending" }).length
     uploadBusy = false
-    uploadPanelOpen = false
     uploadPct = 0
     uploadStatus = uploadOk + " ok, " + uploadFail + " failed"
       + (uploading + pending > 0 ? ", " + (uploading + pending) + " cancelled" : "")
+  }
+
+  // Чистка панели: null — вычистить всё, массив state — только эти строки.
+  function clearUploadRows(states) {
+    const kept = states === null
+      ? []
+      : uploadItems.filter(function(it) { return !states.includes(it.state) })
+    uploadItems = kept
+    if (kept.length === 0) uploadPanelOpen = false
+  }
+
+  // Одна строка — кнопка «✕» справа от строки (ok/fail после заливки).
+  function removeUploadRow(i) {
+    const kept = uploadItems.slice()
+    kept.splice(i, 1)
+    uploadItems = kept
+    if (kept.length === 0) uploadPanelOpen = false
   }
 
   function patchTrack(id, payload) {
@@ -659,22 +675,19 @@ BarWidget {
         LayoutMirroring.enabled: false
         LayoutMirroring.childrenInherit: true
 
-        // Прогресс заливки (видна только пока заливаем): сводный процент
-        // всей очереди. Клик сворачивает/разворачивает панель файлов.
+        // Заливки: иконка-кнопка в ряду транспорта (трей со стрелкой вверх),
+        // подсвечивается, пока очередь бежит. Панель открывается по клику.
         Button {
-          visible: root.uploadBusy || root.uploadPanelOpen
-          text: root.uploadBusy
-            ? Math.floor(((root.uploadOk + root.uploadFail) +
-              (root.uploadPct / 100)) / Math.max(1, root.uploadItems.length) * 100) + "%"
-            : "done"
-          foreground: root.uploadBusy ? Commons.Color.accent : root.bar.foreground
-          fontSize: Style.font.caption
+          visible: root.uploadItems.length > 0 || root.uploadBusy
+          iconText: String.fromCodePoint(0xF1BE) // nf-md-tray-arrow-up
+          foreground: root.uploadBusy ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.2)
+          iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
+          tooltipText: "upload progress"
           onClicked: {
             root.sortMenuOpen = false
-            if (root.uploadPanelOpen && !root.uploadBusy) root.uploadPanelOpen = false
-            else root.uploadPanelOpen = !root.uploadPanelOpen
+            root.uploadPanelOpen = !root.uploadPanelOpen
           }
         }
 
@@ -993,13 +1006,37 @@ BarWidget {
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             elide: Text.ElideRight
-            width: parent.width - cancelBtn.implicitWidth - Style.space(6)
+            width: parent.width - (root.uploadBusy ? cancelBtn.implicitWidth : 0)
+              - (root.uploadFail > 0 && !root.uploadBusy ? clearFailedBtn.implicitWidth : 0)
+              - (root.uploadItems.length > 0 && !root.uploadBusy ? clearAllBtn.implicitWidth : 0)
+              - Style.space(12)
+          }
+
+          Button {
+            id: clearFailedBtn
+            visible: !root.uploadBusy && root.uploadFail > 0
+            height: Style.space(24)
+            fontSize: Style.font.caption
+            text: "clear failed"
+            foreground: root.bar.foreground
+            onClicked: root.clearUploadRows(["fail"])
+          }
+
+          Button {
+            id: clearAllBtn
+            visible: !root.uploadBusy && root.uploadItems.length > 0
+            height: Style.space(24)
+            fontSize: Style.font.caption
+            text: "clear all"
+            foreground: root.bar.foreground
+            onClicked: root.clearUploadRows(null)
           }
 
           Button {
             id: cancelBtn
             visible: root.uploadBusy
-            height: Style.space(26)
+            height: Style.space(24)
+            fontSize: Style.font.caption
             text: "cancel"
             foreground: root.bar.foreground
             onClicked: root.uploadCancel()
@@ -1062,6 +1099,20 @@ BarWidget {
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
                   horizontalAlignment: Text.AlignRight
+                }
+
+                // Убрать строку: только для готовых и провальных — очередь
+                // на ходу не редактируется.
+                Button {
+                  visible: modelData.state === "ok" || modelData.state === "fail"
+                  enabled: !root.uploadBusy
+                  opacity: enabled ? 1.0 : 0.4
+                  iconText: "✕"
+                  iconSize: Style.font.caption
+                  horizontalPadding: Style.space(2)
+                  verticalPadding: 0
+                  foreground: Qt.darker(root.bar.foreground, 1.4)
+                  onClicked: root.removeUploadRow(index)
                 }
               }
             }
