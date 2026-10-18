@@ -153,6 +153,8 @@ BarWidget {
   property int uploadFail: 0
   property real uploadPct: 0
   property string uploadStatus: ""
+  // Первая ошибка заливки попадает в итог — иначе она тонет за статусом.
+  property string uploadLastError: ""
   // Панель прогресса на месте списка треков; открывается на время заливки.
   property bool uploadPanelOpen: false
   property bool uploadCancelled: false
@@ -168,6 +170,13 @@ BarWidget {
   Process {
     id: pickProc
     stdout: StdioCollector { onStreamFinished: root.uploadPicked(text) }
+  }
+
+  // Разовая диагностика первого запуска: если python-аплоадер не стартует,
+  // журнал подскажет и путь, и причину.
+  Component.onCompleted: {
+    loadLibrary()
+    console.warn("media: uploader path =", root.uploaderPath)
   }
 
   function uploadPick() {
@@ -194,6 +203,7 @@ BarWidget {
     uploadPct = 0
     uploadCancelled = false
     uploadResponse = ""
+    uploadLastError = ""
     uploadBusy = true
     uploadItems = paths.map(function(p) {
       const base = p.slice(p.lastIndexOf("/") + 1)
@@ -219,6 +229,9 @@ BarWidget {
         if (m) root.uploadPct = Number(m[1])
       }
     }
+    stderr: StdioCollector {
+      onStreamFinished: if (text !== "") console.warn("media: uploader stderr:", text)
+    }
     onRunningChanged: if (!running) root.uploadDone()
   }
 
@@ -235,17 +248,20 @@ BarWidget {
     }
     if (idx === -1) {
       uploadBusy = false
-      uploadPanelOpen = false
       loadLibrary()
+      // Панель остаётся открытой — пользователь пробежит глазами ✓/✕
+      // и закроет сам (кнопка переключается в "done").
       uploadStatus = uploadFail === 0
         ? "done: " + uploadOk + " track" + (uploadOk > 1 ? "s" : "")
         : uploadOk + " ok, " + uploadFail + " failed"
+        + (uploadLastError !== "" ? " — " + uploadLastError : "")
       return
     }
     markItem(idx, "uploading")
     uploadPct = 0
     uploadResponse = ""
     uploadStatus = "uploading (" + (uploadOk + uploadFail + 1) + "/" + uploadItems.length + ")…"
+    console.warn("media: uploader run:", root.uploaderPath, "|", uploadItems[idx].path)
     uploadProc.command = ["python3", root.uploaderPath, uploadItems[idx].path, root.server]
     uploadProc.running = true
   }
@@ -263,7 +279,7 @@ BarWidget {
       msg = "bad server response: " + String(root.uploadResponse).slice(0, 60)
     }
     if (idx >= 0) markItem(idx, ok ? "ok" : "fail")
-    if (!ok) { uploadFail++; editStatus = msg; editError = true }
+    if (!ok) { uploadFail++; uploadLastError = msg; editStatus = msg; editError = true }
     uploadNext()
   }
 
@@ -365,7 +381,6 @@ BarWidget {
     xhr.send()
   }
 
-  Component.onCompleted: loadLibrary()
   onPopupOpenChanged: if (popupOpen) {
     loadLibrary()
     scrollPending = true
@@ -644,16 +659,19 @@ BarWidget {
         // Прогресс заливки (видна только пока заливаем): сводный процент
         // всей очереди. Клик сворачивает/разворачивает панель файлов.
         Button {
-          visible: root.uploadBusy
-          text: Math.floor(((root.uploadOk + root.uploadFail) +
-            (root.uploadPct / 100)) / Math.max(1, root.uploadItems.length) * 100) + "%"
-          foreground: Commons.Color.accent
+          visible: root.uploadBusy || root.uploadPanelOpen
+          text: root.uploadBusy
+            ? Math.floor(((root.uploadOk + root.uploadFail) +
+              (root.uploadPct / 100)) / Math.max(1, root.uploadItems.length) * 100) + "%"
+            : "done"
+          foreground: root.uploadBusy ? Commons.Color.accent : root.bar.foreground
           fontSize: Style.font.caption
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
           onClicked: {
             root.sortMenuOpen = false
-            root.uploadPanelOpen = !root.uploadPanelOpen
+            if (root.uploadPanelOpen && !root.uploadBusy) root.uploadPanelOpen = false
+            else root.uploadPanelOpen = !root.uploadPanelOpen
           }
         }
 
@@ -956,7 +974,7 @@ BarWidget {
       Column {
         id: uploadPanelCol
         readonly property real upDownWidth: Style.space(40)
-        visible: root.isOurPlayer && root.uploadBusy && root.uploadPanelOpen
+        visible: root.isOurPlayer && root.uploadPanelOpen && root.uploadItems.length > 0
           && root.editingTrack === null
         width: parent.width
         spacing: Style.space(4)
@@ -977,6 +995,7 @@ BarWidget {
 
           Button {
             id: cancelBtn
+            visible: root.uploadBusy
             height: Style.space(26)
             text: "cancel"
             foreground: root.bar.foreground
