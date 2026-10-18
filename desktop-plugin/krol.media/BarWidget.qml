@@ -161,11 +161,15 @@ BarWidget {
   property bool uploadCancelled: false
   // Сводный прогресс очереди: готовые файлы + доли бегущих. Отдельная
   // полоска + счётчик в шапке панели; общий статус в попапе не трогаем.
+  // Читаем проценты из СВОЙСТВ воркеров: тик p:NN% не трогает uploadItems,
+  // Repeater не пересобирает строки (иначе прокрутка умирает).
   readonly property real uploadFrac: {
     const total = Math.max(1, uploadItems.length)
     var done = uploadOk + uploadFail
-    for (let i = 0; i < uploadItems.length; i++)
-      if (uploadItems[i].state === "uploading") done += (uploadItems[i].pct ?? 0) / 100
+    for (let w = 0; w < uploadWorkers.length; w++) {
+      const wk = uploadWorkers[w]
+      if (wk.running && wk.itemId >= 0) done += wk.pct / 100
+    }
     return Math.min(1, done / total)
   }
   readonly property string uploadSummary: {
@@ -286,29 +290,28 @@ BarWidget {
     pumpUpload()
   }
 
-  // Воркер заливки: один Process + его строка очереди. Инстансов три —
-  // пока у моста/ffmpeg конвертируется файл, остальные доливаются дальше;
-  // ffmpeg и так одиночные процессы у сервера, узких мест не создаёт.
+  // Воркер заливки: один Process + его строка очереди. Проценты и ответ
+  // сервера живут в СВОЙСТВАХ воркера: тик p:NN% переписывает число, а не
+  // массив очереди — Repeater строки не пересобирает, GUI не дёргается.
   component UploadWorker: Process {
     // Строка очереди, за которую воркер жив; -1 — свободен/закончил.
+    property int workerId: 0
     property int itemId: -1
+    property real pct: 0      // последний p:NN% этого воркера
+    property string resp: ""  // финальная строка {} от сервера
     stdout: SplitParser {
       splitMarker: "\n"
-      onRead: function(data) { root.uploadLine(itemId, data) }
+      onRead: function(data) { root.uploadLine(workerId, data) }
     }
     stderr: StdioCollector {
       onStreamFinished: if (text !== "") console.warn("media: uploader stderr:", text)
     }
-    onRunningChanged: if (!running && itemId >= 0) {
-      const id = itemId
-      itemId = -1
-      root.uploadFinished(id)
-    }
+    onRunningChanged: if (!running && itemId >= 0) root.uploadFinished(workerId)
   }
 
-  UploadWorker { id: uploadWorkerA }
-  UploadWorker { id: uploadWorkerB }
-  UploadWorker { id: uploadWorkerC }
+  UploadWorker { id: uploadWorkerA; workerId: 0 }
+  UploadWorker { id: uploadWorkerB; workerId: 1 }
+  UploadWorker { id: uploadWorkerC; workerId: 2 }
   readonly property var uploadWorkers: [uploadWorkerA, uploadWorkerB, uploadWorkerC]
 
   function markItem(i, state) {
@@ -317,21 +320,16 @@ BarWidget {
     uploadItems = items
   }
 
-  function uploadLine(itemId, data) {
+  function uploadLine(wid, data) {
     const line = String(data).trim()
     if (line === "") return
+    const wk = uploadWorkers[wid]
     if (line.startsWith("{")) {
-      const items = uploadItems.slice()
-      items[itemId] = Object.assign({}, items[itemId], { resp: line })
-      uploadItems = items
+      wk.resp = line
       return
     }
     const m = line.match(/^p:(\d+)%$/)
-    if (m) {
-      const items = uploadItems.slice()
-      items[itemId] = Object.assign({}, items[itemId], { pct: Number(m[1]) })
-      uploadItems = items
-    }
+    if (m) wk.pct = Number(m[1])
   }
 
   function pumpUpload() {
@@ -346,6 +344,8 @@ BarWidget {
       uploadItems = items
       console.warn("media: uploader run:", root.uploaderPath, "|", uploadItems[idx].path)
       wk.itemId = idx
+      wk.pct = 0
+      wk.resp = ""
       wk.command = ["python3", root.uploaderPath, uploadItems[idx].path, root.server]
       wk.running = true
       active = true
@@ -358,21 +358,24 @@ BarWidget {
     }
   }
 
-  function uploadFinished(itemId) {
-    // Отмена или конец пачки: бегущие воркеры долетели после kill —
-    // перезапуск очереди здесь был бы воскрешением отменённой заливки.
+  function uploadFinished(wid) {
+    const wk = uploadWorkers[wid]
+    const idx = wk.itemId
+    wk.itemId = -1
+    // Отмена или конец пачки: сработавшие после kill воркеры — перезапуск
+    // очереди здесь был бы воскрешением отменённой заливки.
     if (!uploadBusy) return
-    const it = uploadItems[itemId]
     let ok = false
     let msg = "server did not respond"
     try {
-      const r = JSON.parse(it.resp ?? "")
+      const r = JSON.parse(wk.resp)
       if (r && (r.success || r.existed)) { ok = true; uploadOk++ }
       else msg = r.error || "server refused"
     } catch (e) {
-      msg = "bad server response: " + String(it.resp ?? "").slice(0, 60)
+      msg = "bad server response: " + String(wk.resp).slice(0, 60)
     }
-    markItem(itemId, ok ? "ok" : "fail")
+    wk.resp = ""
+    markItem(idx, ok ? "ok" : "fail")
     if (!ok) { uploadFail++; uploadLastError = msg; editStatus = msg; editError = true }
     pumpUpload()
   }
@@ -389,6 +392,8 @@ BarWidget {
       if (wk.running) {
         if (wk.itemId >= 0) markItem(wk.itemId, "fail")
         wk.itemId = -1
+        wk.resp = ""
+        wk.pct = 0
         wk.running = false
       }
     }
@@ -1183,14 +1188,21 @@ BarWidget {
 
                 Text {
                   textFormat: Text.PlainText
-                  readonly property real pct: modelData.state === "uploading" ? (modelData.pct ?? 0)
-                    : modelData.state === "ok" ? 100
-                    : modelData.state === "fail" ? 0
-                    : 0
+                  readonly property real pct: {
+                    // Читаем прямо воркеров: тик p:NN% обновляет их свойства,
+                    // массив uploadItems (и строки!) не пересоздаётся.
+                    const ws = root.uploadWorkers
+                    for (let w = 0; w < ws.length; w++) {
+                      const wk = ws[w]
+                      if (wk.running && wk.itemId >= 0
+                        && root.uploadItems[wk.itemId] === modelData) return wk.pct
+                    }
+                    return modelData.state === "ok" ? 100 : 0
+                  }
                   // Байты дошли до 100%, но сервер ещё конвертирует и пишет
                   // базу — до ответа это не «готово», а конвертация.
                   text: modelData.state === "uploading"
-                    ? ((modelData.pct ?? 0) < 100 ? (modelData.pct ?? 0) + "%" : "converting…")
+                    ? (pct < 100 ? pct + "%" : "converting…")
                     : modelData.state === "ok" ? "✓"
                     : modelData.state === "fail" ? "✕" : "—"
                   color: modelData.state === "fail" ? Commons.Color.accent
