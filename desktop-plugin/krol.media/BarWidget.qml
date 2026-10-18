@@ -329,7 +329,11 @@ BarWidget {
       return
     }
     const m = line.match(/^p:(\d+)%$/)
-    if (m) wk.pct = Number(m[1])
+    if (m) {
+      wk.pct = Number(m[1])
+      // Разовая диагностическая точка: доехал ли до UI финальный тик.
+      if (wk.pct === 100) console.warn("media: p:100 wid =", wid)
+    }
   }
 
   function pumpUpload() {
@@ -1206,13 +1210,12 @@ BarWidget {
                 Text {
                   textFormat: Text.PlainText
                   readonly property real pct: {
-                    // Читаем прямо воркеров: тик p:NN% обновляет их свойства,
-                    // массив uploadItems (и строки!) не пересоздаётся.
+                    // Воркер владеет строкой по индексу (✕ на ходу залочен —
+                    // индексы стабильны). Ничего не бегет — pct по состоянию.
                     const ws = root.uploadWorkers
                     for (let w = 0; w < ws.length; w++) {
                       const wk = ws[w]
-                      if (wk.running && wk.itemId >= 0
-                        && root.uploadItems[wk.itemId] === modelData) return wk.pct
+                      if (wk.running && wk.itemId === index) return wk.pct
                     }
                     return modelData.state === "ok" ? 100 : 0
                   }
