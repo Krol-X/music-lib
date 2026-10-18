@@ -145,10 +145,17 @@ describe("слияние с тегами", () => {
     expect(tags.year).toBe(1999);
   });
 
-  test("неугадываемое имя даёт none", () => {
-    // Голое имя из цифр — это номер без названия, а не название «1234».
-    expect(resolveTags(EMPTY_TAGS, "1234").source).toBe("none");
-    expect(resolveTags(EMPTY_TAGS, "05 -.mp3").source).toBe("none");
+  test("неугадываемое имя получает название из имени файла", () => {
+    // Голое имя из цифр или без шаблона всё равно получает имя файла без расширения как название
+    const res1234 = resolveTags(EMPTY_TAGS, "1234");
+    expect(res1234.source).toBe("filename");
+    expect(res1234.tags.title).toBe("1234");
+
+    const res05 = resolveTags(EMPTY_TAGS, "05 -.mp3");
+    expect(res05.source).toBe("filename");
+    expect(res05.tags.title).toBe("05 -");
+
+    // При полностью пустом имени файла источник none
     expect(resolveTags(EMPTY_TAGS, "").source).toBe("none");
   });
 

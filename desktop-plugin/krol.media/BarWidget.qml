@@ -81,7 +81,7 @@ BarWidget {
     let items = root.library
     if (q !== "") {
       items = items.filter(function(t) {
-        return [t.title, t.artist, t.album].some(function(s) {
+        return [t.title, t.artist, t.album, t.filename].some(function(s) {
           return s && s.toLowerCase().indexOf(q) !== -1
         })
       })
@@ -106,9 +106,9 @@ BarWidget {
     }
 
     if (root.sortIndex === 0) {
-      // 0: Title — по названию, при совпадении — по исполнителю, альбому и номеру трека
+      // 0: Title — по названию (или имени файла), при совпадении — по исполнителю, альбому и номеру трека
       items.sort(function(a, b) {
-        return cmpText(a.title, b.title)
+        return cmpText(a.title || a.filename, b.title || b.filename)
           || (a.artist || "").localeCompare(b.artist || "")
           || (a.album || "").localeCompare(b.album || "")
           || num(a.trackNo) - num(b.trackNo)
@@ -120,18 +120,19 @@ BarWidget {
           || cmpText(a.album, b.album)
           || num(a.discNo) - num(b.discNo)
           || num(a.trackNo) - num(b.trackNo)
+          || cmpText(a.title || a.filename, b.title || b.filename)
       })
     } else if (root.sortIndex === 2) {
       // 2: Recent — по штампу последнего прослушивания
       items.sort(function(a, b) {
         return flip(String(a.lastPlayed).localeCompare(String(b.lastPlayed)))
-          || (a.title || "").localeCompare(b.title || "")
+          || cmpText(a.title || a.filename, b.title || b.filename)
       })
     } else {
       // 3: Newest — по дате добавления
       items.sort(function(a, b) {
         return cmpText(a.createdAt, b.createdAt)
-          || (a.title || "").localeCompare(b.title || "")
+          || cmpText(a.title || a.filename, b.title || b.filename)
       })
     }
     return items

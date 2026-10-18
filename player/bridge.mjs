@@ -381,7 +381,7 @@ function orderTracks(tracks) {
   switch (state.queueSort.mode) {
     case "title":
       tracks.sort((a, b) => (
-        cmpText(a.title, b.title)
+        cmpText(a.title || a.filename, b.title || b.filename)
         || String(a.artist || "").localeCompare(String(b.artist || ""))
         || String(a.album || "").localeCompare(String(b.album || ""))
         || num(a.trackNo) - num(b.trackNo)
@@ -393,6 +393,7 @@ function orderTracks(tracks) {
         || cmpText(a.album, b.album)
         || num(a.discNo) - num(b.discNo)
         || num(a.trackNo) - num(b.trackNo)
+        || cmpText(a.title || a.filename, b.title || b.filename)
       ));
       break;
     case "recent":
@@ -401,13 +402,13 @@ function orderTracks(tracks) {
         const bPlayed = b.lastPlayed ? 1 : 0;
         if (aPlayed !== bPlayed) return bPlayed - aPlayed; // nulls always at the end
         return flip(String(a.lastPlayed || "").localeCompare(String(b.lastPlayed || "")))
-          || String(a.title || "").localeCompare(String(b.title || ""));
+          || cmpText(a.title || a.filename, b.title || b.filename);
       });
       break;
     case "newest":
       tracks.sort((a, b) => (
         cmpText(a.createdAt, b.createdAt)
-        || String(a.title || "").localeCompare(String(b.title || ""))
+        || cmpText(a.title || a.filename, b.title || b.filename)
       ));
       break;
     default: // album
@@ -416,6 +417,7 @@ function orderTracks(tracks) {
         || cmpText(a.album, b.album)
         || num(a.discNo) - num(b.discNo)
         || num(a.trackNo) - num(b.trackNo)
+        || cmpText(a.title || a.filename, b.title || b.filename)
       ));
   }
   return tracks;

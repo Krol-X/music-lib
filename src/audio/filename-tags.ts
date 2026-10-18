@@ -128,7 +128,14 @@ export function resolveTags(
     discTotal: tagged.discTotal ?? guessed.discTotal,
   };
 
-  if (merged.title === null) return { tags: merged, source: "none" };
+  if (merged.title === null) {
+    const fallback = stripExtension(filename).trim();
+    if (fallback !== "") {
+      merged.title = fallback;
+      return { tags: merged, source: "filename" };
+    }
+    return { tags: merged, source: "none" };
+  }
   const usedGuess = Object.keys(guessed).some(
     (key) => guessed[key as keyof TrackTags] !== null && tagged[key as keyof TrackTags] === null,
   );
