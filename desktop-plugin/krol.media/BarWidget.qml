@@ -349,6 +349,12 @@ BarWidget {
   function saveEdit() {
     const t = editingTrack
     if (!t) return
+    // Минимальное требование к треку — имя: сохранять без него запрещаю.
+    if (editTitle.text.trim() === "") {
+      editError = true
+      editStatus = "name required"
+      return
+    }
     patchTrack(t.id, {
       title: editTitle.text,
       artist: editArtist.text,
@@ -1211,8 +1217,8 @@ BarWidget {
               required property var modelData
 
               readonly property bool isCurrent: root.activePlayer
-                && modelData.title === root.activePlayer.trackTitle
-                && modelData.artist === root.activePlayer.trackArtist
+                && (modelData.title ?? "") === (root.activePlayer.trackTitle ?? "")
+                && (modelData.artist ?? "") === (root.activePlayer.trackArtist ?? "")
 
               // В режиме «недавно прослушанные» к строке добавляется штамп:
               // сервер хранит время в UTC-ISO, Date его читает как UTC —

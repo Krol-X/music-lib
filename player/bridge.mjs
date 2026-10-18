@@ -126,7 +126,8 @@ function rebuildMetadata() {
     "mpris:length": new Variant("x", BigInt(Math.round((item.durationSec ?? state.durationSec ?? 0) * 1e6))),
     "xesam:url": new Variant("s", url(item.id)),
     // Название неизвестно только у рипов без тегов: filename честнее null.
-    "xesam:title": new Variant("s", item.title ?? item.filename ?? "Без названия"),
+    // || вместо ?? — пустая строка из формы падения тоже считается «нет».
+    "xesam:title": new Variant("s", item.title || item.filename || "Без названия"),
   };
   if (item.artist) m["xesam:artist"] = new Variant("as", [item.artist]);
   if (item.album) m["xesam:album"] = new Variant("s", item.album);
