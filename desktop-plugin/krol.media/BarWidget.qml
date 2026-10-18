@@ -152,13 +152,30 @@ BarWidget {
   property int uploadOk: 0
   property int uploadFail: 0
   property real uploadPct: 0
-  property string uploadStatus: ""
   // Первая ошибка заливки попадает в итог — иначе она тонет за статусом.
   property string uploadLastError: ""
   // Панель прогресса на месте списка треков; открывается на время заливки.
   property bool uploadPanelOpen: false
   property bool uploadCancelled: false
   property string uploadResponse: ""
+  // Сводный прогресс очереди: готовые файлы + доля текущего. Отдельная
+  // полоска + счётчик в шапке панели; общий статус в попапе не трогаем.
+  readonly property real uploadFrac: {
+    const total = Math.max(1, uploadItems.length)
+    const running = uploadItems.findIndex(function(it) { return it.state === "uploading" })
+    const add = running >= 0 ? uploadPct / 100 : 0
+    return Math.min(1, (uploadOk + uploadFail + add) / total)
+  }
+  readonly property string uploadSummary: {
+    const n = uploadItems.length
+    const k = uploadOk + uploadFail
+    const pct = Math.round(uploadFrac * 100)
+    if (uploadBusy) return "uploading — " + k + "/" + n + " (" + pct + "%)"
+    const base = uploadFail > 0
+      ? k + " ok, " + uploadFail + " failed"
+      : "done: " + uploadOk + " track" + (uploadOk > 1 ? "s" : "")
+    return base + (uploadLastError !== "" ? " — " + uploadLastError : "")
+  }
   // Путь к uploader.py рядом с этим файлом QML.
   readonly property string uploaderPath: localPath(Qt.resolvedUrl("uploader.py"))
 
@@ -254,16 +271,11 @@ BarWidget {
       loadLibrary()
       // Панель остаётся открытой — пользователь пробежит глазами ✓/✕
       // и закроет сам (кнопка переключается в "done").
-      uploadStatus = uploadFail === 0
-        ? "done: " + uploadOk + " track" + (uploadOk > 1 ? "s" : "")
-        : uploadOk + " ok, " + uploadFail + " failed"
-        + (uploadLastError !== "" ? " — " + uploadLastError : "")
       return
     }
     markItem(idx, "uploading")
     uploadPct = 0
     uploadResponse = ""
-    uploadStatus = "uploading (" + (uploadOk + uploadFail + 1) + "/" + uploadItems.length + ")…"
     console.warn("media: uploader run:", root.uploaderPath, "|", uploadItems[idx].path)
     uploadProc.command = ["python3", root.uploaderPath, uploadItems[idx].path, root.server]
     uploadProc.running = true
@@ -294,8 +306,6 @@ BarWidget {
     const pending = uploadItems.filter(function(it) { return it.state === "pending" }).length
     uploadBusy = false
     uploadPct = 0
-    uploadStatus = uploadOk + " ok, " + uploadFail + " failed"
-      + (uploading + pending > 0 ? ", " + (uploading + pending) + " cancelled" : "")
   }
 
   // Чистка панели: null — вычистить всё, массив state — только эти строки.
@@ -675,17 +685,20 @@ BarWidget {
         LayoutMirroring.enabled: false
         LayoutMirroring.childrenInherit: true
 
-        // Заливки: иконка-кнопка в ряду транспорта (трей со стрелкой вверх),
-        // подсвечивается, пока очередь бежит. Панель открывается по клику.
+        // Заливки: иконка-кнопка в ряду транспорта (стрелка вверх из трей),
+        // подсвечивается, пока очередь бежит. Не прячется никогда — панель
+        // открывается по клику, пустая заливка клик просто игнорирует.
         Button {
-          visible: root.uploadItems.length > 0 || root.uploadBusy
           iconText: String.fromCodePoint(0xF0552) // nf-md-upload (cmap + на глаз)
-          foreground: root.uploadBusy ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.2)
+          foreground: root.uploadBusy ? Commons.Color.accent
+            : root.uploadItems.length > 0 ? Qt.darker(root.bar.foreground, 1.2)
+            : Qt.darker(root.bar.foreground, 1.6)
           iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
           tooltipText: "upload progress"
           onClicked: {
+            if (root.uploadItems.length === 0 && !root.uploadBusy) return
             root.sortMenuOpen = false
             root.uploadPanelOpen = !root.uploadPanelOpen
           }
@@ -765,7 +778,6 @@ BarWidget {
           opacity: enabled ? 1.0 : 0.4
           onClicked: {
             editStatus = ""
-            uploadStatus = ""
             root.uploadPick()
           }
         }
@@ -898,92 +910,22 @@ BarWidget {
       // «next» после выбора продолжает идти по этому же списку. Секция видна
       // только когда активный плеер — мост (рубеж по имени на шине).
       // ── библиотечная строка: заливка через zenity; статус операции рядом ──
-      // Статусы заливки и правки, когда форма редактирования закрыта —
-      // единственная строка живого отчёта CRUD в попапе.
+      // Статус правки метаданных, когда форма редактирования закрыта.
+      // Заливка обзавелась своей панелью со сводным прогрессом — сюда
+      // upload-статусы больше не пишем, чтобы "done: N tracks" не висело
+      // поверх всех видов попапа.
       Text {
-        visible: root.isOurPlayer && root.editingTrack === null
-          && (root.uploadStatus !== "" || root.editStatus !== "")
+        visible: root.isOurPlayer && root.editingTrack === null && root.editStatus !== ""
         width: parent.width
         height: Style.space(26)
         verticalAlignment: Text.AlignVCenter
         textFormat: Text.PlainText
         elide: Text.ElideRight
-        text: root.uploadStatus !== "" ? root.uploadStatus : root.editStatus
-        color: root.editError && root.uploadStatus === ""
+        text: root.editStatus
+        color: root.editError
           ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.4)
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.caption
-      }
-
-      // Поиск и сортировка — локальные, по уже скачанному списку: в попапе
-      // мгновенный отклик важнее свежести данных, список обновится при
-      // следующем открытии.
-      Row {
-        visible: root.isOurPlayer && root.library.length > 0 && root.editingTrack === null
-        height: Style.space(30)
-        width: parent.width
-        spacing: Style.space(6)
-
-        TextField {
-          id: filterField
-          width: Math.max(Style.space(120),
-            parent.width - sortCycle.implicitWidth - orderBtn.implicitWidth - Style.space(12))
-          height: parent.height
-          placeholderText: "search…"
-          foreground: root.bar.foreground
-          font.family: root.bar.fontFamily
-          onActiveFocusChanged: console.warn("media: filter activeFocus =", activeFocus)
-          onCursorVisibleChanged: console.warn("media: filter caret =", cursorVisible)
-          // Клик внутри PopupWindow иногда проходит мимо штатного захвата
-          // фокуса мышью — дублируем явным forceActiveFocus.
-          TapHandler {
-            gesturePolicy: TapHandler.ReleaseWithinBounds
-            onTapped: filterField.forceActiveFocus()
-          }
-        }
-
-        Button {
-          id: sortCycle
-          height: parent.height
-          text: root.sortLabel
-          foreground: root.sortMenuOpen ? Commons.Color.accent : root.bar.foreground
-          onClicked: root.sortMenuOpen = !root.sortMenuOpen
-        }
-
-        // Направление текущего режима: ↑ алфавит/старые, ↓ обратно.
-        // Свой дефолт на режим ставит cycleSort, тут только доигрывается.
-        Button {
-          id: orderBtn
-          height: parent.height
-          iconText: root.orderDesc ? "↓" : "↑"
-          foreground: root.orderDesc ? Commons.Color.accent : root.bar.foreground
-          onClicked: root.orderDesc = !root.orderDesc
-        }
-      }
-
-      // Меню режимов сортировки: обычного <select> в QML нет, а вложить
-      // в попап ещё одно popup-окно нельзя (окно привязывается только к
-      // панели), поэтому честный дропдаун рисуем на месте плейлиста:
-      // идёт выбор — список треков заменяется списком режимов.
-      Column {
-        id: sortMenu
-        visible: root.isOurPlayer && root.sortMenuOpen && root.editingTrack === null
-        width: parent.width
-        spacing: Style.space(4)
-
-        Repeater {
-          model: root.sortLabels
-          Button {
-            required property string modelData
-            required property int index
-            width: sortMenu.width
-            height: Style.space(34)
-            text: modelData + (root.sortIndex === index ? "  ✓" : "")
-            selected: root.sortIndex === index
-            foreground: root.bar.foreground
-            onClicked: root.pickSort(index)
-          }
-        }
       }
 
       // ── панель заливки: пофайловый прогресс на месте списка треков ────────
@@ -995,13 +937,14 @@ BarWidget {
         width: parent.width
         spacing: Style.space(4)
 
+        // Сводный прогресс очереди: счётчик и тонкая полоска.
         Row {
           width: parent.width
           spacing: Style.space(6)
 
           Text {
             textFormat: Text.PlainText
-            text: root.uploadStatus
+            text: root.uploadSummary
             color: Qt.darker(root.bar.foreground, 1.4)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
@@ -1040,6 +983,29 @@ BarWidget {
             text: "cancel"
             foreground: root.bar.foreground
             onClicked: root.uploadCancel()
+          }
+        }
+
+        // Тонкая полоска сводного прогресса очереди.
+        Item {
+          width: parent.width
+          height: Style.space(5)
+
+          Rectangle {
+            anchors.fill: parent
+            radius: Style.space(2)
+            color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.15)
+          }
+
+          Rectangle {
+            width: parent.width * root.uploadFrac
+            radius: Style.space(2)
+            color: root.uploadBusy ? Commons.Color.accent : root.bar.foreground
+            opacity: root.uploadBusy ? 1.0 : 0.5
+            Behavior on width {
+              enabled: !root.bar || root.bar.foregroundAnimationEnabled
+              NumberAnimation { duration: Style.duration(120) }
+            }
           }
         }
 
@@ -1120,6 +1086,78 @@ BarWidget {
           }
         }
       }
+
+      // Поиск и сортировка — локальные, по уже скачанному списку: в попапе
+      // мгновенный отклик важнее свежести данных, список обновится при
+      // следующем открытии.
+      Row {
+        visible: root.isOurPlayer && root.library.length > 0 && root.editingTrack === null
+        height: Style.space(30)
+        width: parent.width
+        spacing: Style.space(6)
+
+        TextField {
+          id: filterField
+          width: Math.max(Style.space(120),
+            parent.width - sortCycle.implicitWidth - orderBtn.implicitWidth - Style.space(12))
+          height: parent.height
+          placeholderText: "search…"
+          foreground: root.bar.foreground
+          font.family: root.bar.fontFamily
+          onActiveFocusChanged: console.warn("media: filter activeFocus =", activeFocus)
+          onCursorVisibleChanged: console.warn("media: filter caret =", cursorVisible)
+          // Клик внутри PopupWindow иногда проходит мимо штатного захвата
+          // фокуса мышью — дублируем явным forceActiveFocus.
+          TapHandler {
+            gesturePolicy: TapHandler.ReleaseWithinBounds
+            onTapped: filterField.forceActiveFocus()
+          }
+        }
+
+        Button {
+          id: sortCycle
+          height: parent.height
+          text: root.sortLabel
+          foreground: root.sortMenuOpen ? Commons.Color.accent : root.bar.foreground
+          onClicked: root.sortMenuOpen = !root.sortMenuOpen
+        }
+
+        // Направление текущего режима: ↑ алфавит/старые, ↓ обратно.
+        // Свой дефолт на режим ставит cycleSort, тут только доигрывается.
+        Button {
+          id: orderBtn
+          height: parent.height
+          iconText: root.orderDesc ? "↓" : "↑"
+          foreground: root.orderDesc ? Commons.Color.accent : root.bar.foreground
+          onClicked: root.orderDesc = !root.orderDesc
+        }
+      }
+
+      // Меню режимов сортировки: обычного <select> в QML нет, а вложить
+      // в попап ещё одно popup-окно нельзя (окно привязывается только к
+      // панели), поэтому честный дропдаун рисуем на месте плейлиста:
+      // идёт выбор — список треков заменяется списком режимов.
+      Column {
+        id: sortMenu
+        visible: root.isOurPlayer && root.sortMenuOpen && root.editingTrack === null
+        width: parent.width
+        spacing: Style.space(4)
+
+        Repeater {
+          model: root.sortLabels
+          Button {
+            required property string modelData
+            required property int index
+            width: sortMenu.width
+            height: Style.space(34)
+            text: modelData + (root.sortIndex === index ? "  ✓" : "")
+            selected: root.sortIndex === index
+            foreground: root.bar.foreground
+            onClicked: root.pickSort(index)
+          }
+        }
+      }
+
 
       Flickable {
         id: trackFlick
