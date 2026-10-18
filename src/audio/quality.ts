@@ -164,7 +164,10 @@ async function decodeWindows(path: string, durationSec: number): Promise<Int16Ar
   const code = await proc.exited;
   if (code !== 0) return null;
 
-  const pcm = new Int16Array(await new Response(proc.stdout).arrayBuffer());
+  const buf = await new Response(proc.stdout).arrayBuffer();
+  if (buf.byteLength < 2) return null;
+  const safeLength = buf.byteLength - (buf.byteLength % 2);
+  const pcm = new Int16Array(buf, 0, safeLength / 2);
   return pcm.length > 0 ? pcm : null;
 }
 

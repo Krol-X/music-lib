@@ -88,23 +88,28 @@ export async function readMpegHeader(path: string): Promise<MpegHeader | null> {
   const mono = channelMode === 3;
   const sideInfoSize = versionBits === 3 ? (mono ? 17 : 32) : mono ? 9 : 17;
   const magicOffset = frame + 4 + sideInfoSize;
+  if (magicOffset + 4 > buf.length) return null;
   const magic = String.fromCharCode(...buf.subarray(magicOffset, magicOffset + 4));
   if (magic !== "Xing" && magic !== "Info") return null;
 
   // Сразу за магией идёт 32-битная маска: какие из счётчиков дальше есть.
   let offset = magicOffset + 4;
+  if (offset + 4 > buf.length) return null;
   const flags = readU32(buf, offset);
   let frames = 0;
   let bytes = 0;
   if (flags & 1) {
     offset += 4;
+    if (offset + 4 > buf.length) return null;
     frames = readU32(buf, offset);
   }
   if (flags & 2) {
     offset += 4;
+    if (offset + 4 > buf.length) return null;
     bytes = readU32(buf, offset);
   }
 
+  if (frame + 0x9c + 10 > buf.length) return null;
   const tag = buf.subarray(frame + 0x9c, frame + 0x9c + 9);
   const encoder = String.fromCharCode(...tag).replace(/\0.*$/, "").trim() || null;
   const methodCode = buf[frame + 0x9c + 9] & 0x0f;

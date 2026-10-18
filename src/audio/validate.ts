@@ -41,23 +41,27 @@ export const MIN_SIZE_RATIO = 0.99;
  * (пустой, текст с расширением .mp3, оборванный в середине заголовка).
  */
 export async function probeDurationSec(path: string): Promise<number | null> {
-  const proc = Bun.spawn(
-    [
-      "ffprobe",
-      "-v", "error",
-      "-select_streams", "a:0",
-      "-show_entries", "format=duration",
-      "-of", "csv=p=0",
-      path,
-    ],
-    { stdout: "pipe", stderr: "pipe" },
-  );
+  try {
+    const proc = Bun.spawn(
+      [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "format=duration",
+        "-of", "csv=p=0",
+        path,
+      ],
+      { stdout: "pipe", stderr: "pipe" },
+    );
 
-  const out = (await new Response(proc.stdout).text()).trim();
-  await proc.exited;
+    const out = (await new Response(proc.stdout).text()).trim();
+    await proc.exited;
 
-  const value = Number.parseFloat(out);
-  return Number.isFinite(value) && value > 0 ? value : null;
+    const value = Number.parseFloat(out);
+    return Number.isFinite(value) && value > 0 ? value : null;
+  } catch {
+    return null;
+  }
 }
 
 /** Результат проверки входа. Все поля — что увидели инструменты. */

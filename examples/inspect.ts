@@ -53,11 +53,13 @@ export async function inspectUpload(file: File) {
 export function serviceTags(meta: { native: Record<string, unknown> }) {
 	const out: Record<string, string> = {};
 
-	for (const [tags] of Object.entries(meta.native)) {
+	for (const tags of Object.values(meta.native)) {
 		if (!Array.isArray(tags)) continue;
 
 		for (const tag of tags as { id: string; value: unknown }[]) {
-			if (tag.id.startsWith("MUSICLIB_")) out[tag.id] = String(tag.value);
+			if (tag && typeof tag.id === "string" && tag.id.startsWith("MUSICLIB_")) {
+				out[tag.id] = String(tag.value);
+			}
 		}
 	}
 

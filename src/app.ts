@@ -17,7 +17,7 @@ import { readTags, toColumns, type TrackTags } from "./audio/tags";
 import { extractCover, coverMime } from "./audio/cover";
 import { resolveTags, type MetaSource } from "./audio/filename-tags";
 import { listTracks, markTrackPlayed, patchToColumns, trackToJson, type PatchBody } from "./tracks";
-import { broadcastPlayed, broadcastConvert, pushSocketPath } from "./push";
+import { broadcastPlayed, broadcastConvert } from "./push";
 
 /**
  * Каталоги вычисляются на вызов: тесты задают MUSICLIB_STORAGE в
@@ -144,6 +144,8 @@ async function convertToOpus(
     throw new Error(`ffmpeg exited with ${proc.exitCode}: ${err.trim()}`);
   }
 
+  broadcastConvert({ name: progress.name, pct: 100 });
+
   return err.trim().length === 0 ? [] : err.trim().split("\n").map((l) => `ffmpeg: ${l}`);
 }
 
@@ -245,12 +247,26 @@ async function coverPreview(
 
   const cachePath = `${tmpDir()}/cover-cache/${width}/${id}.jpg`;
   const cached = Bun.file(cachePath);
-  if (!(await cached.exists())) {
-    await mkdir(dirname(cachePath), { recursive: true });
-    await Bun.write(
-      cachePath,
-      await sharp(coverPath).resize(width, width, { fit: "inside" }).jpeg({ quality: 75 }).toBuffer(),
-    );
+  try {
+    if (!(await cached.exists())) {
+      await mkdir(dirname(cachePath), { recursive: true });
+      const resized = await sharp(coverPath)
+        .resize(width, width, { fit: "inside" })
+        .jpeg({ quality: 75 })
+        .toBuffer();
+      await Bun.write(cachePath, resized);
+    }
+  } catch {
+    // Если sharp не смог отмасштабировать (битый файл/неизвестный формат),
+    // отдаём оригинальный файл как есть вместо падения сервера
+    return new Response(withBody ? source : null, {
+      status: 200,
+      headers: {
+        "Content-Type": coverMime(extOf(coverPath)),
+        "Content-Length": String(source.size),
+        "Cache-Control": "private, max-age=3600",
+      },
+    });
   }
 
   const preview = Bun.file(cachePath);
@@ -291,6 +307,7 @@ interface UploadResult {
  * ничего лишнего не потеряется.
  */
 async function runUploadPipeline(db: Knex, file: File): Promise<UploadResult> {
+  await ensureDirs();
   const ext = extOf(file.name);
   const uploadPath = `${tmpDir()}/${crypto.randomUUID()}.upload`;
   const partPath = `${tmpDir()}/${crypto.randomUUID()}.opus.part`;
@@ -303,6 +320,43 @@ async function runUploadPipeline(db: Knex, file: File): Promise<UploadResult> {
     // BunFile.size ленивый: после rename пути уже нет и он вернул бы 0.
     const sizeBytes = uploaded.size;
     const id = await sha256File(uploaded);
+
+    // Дедупликация по SHA-256: если трек с таким хешем уже есть в базе,
+    // не перекодируем и не перезаписываем файлы заново.
+    const existing = await db("tracks").where("id", id).first();
+    if (existing) {
+      return {
+        success: true,
+        id,
+        existed: true,
+        filename: String(existing.filename),
+        audioUrl: `/audio/${id}`,
+        coverUrl: existing.cover_path ? `/cover/${id}` : null,
+        quality: {
+          sourceBitrateKbps: existing.bitrate_kbps,
+          vbr: existing.vbr === null ? null : Boolean(existing.vbr),
+          vbrMethod: existing.vbr_method,
+          encoder: existing.encoder,
+          durationSec: existing.duration_sec,
+          cutoffHz: existing.cutoff_hz,
+          opusBitrate: existing.opus_bitrate,
+          reason: "файл уже был загружен ранее (дедупликация по SHA-256)",
+        },
+        tags: {
+          title: (existing.title as string) ?? null,
+          artist: (existing.artist as string) ?? null,
+          album: (existing.album as string) ?? null,
+          genre: (existing.genre as string) ?? null,
+          year: (existing.year as number) ?? null,
+          trackNo: (existing.track_no as number) ?? null,
+          trackTotal: (existing.track_total as number) ?? null,
+          discNo: (existing.disc_no as number) ?? null,
+          discTotal: (existing.disc_total as number) ?? null,
+        },
+        metaSource: (existing.meta_source as MetaSource) ?? "none",
+        warnings: [],
+      };
+    }
 
     // Дешёвая проверка до всей работы: если файл не декодируется как аудио,
     // незачем ни спектр смотреть, ни гонять кодировщик.
@@ -526,6 +580,16 @@ export function buildApp(db: Knex) {
         (p): p is string => typeof p === "string",
       );
       await Promise.all(paths.map((p) => rm(p, { force: true })));
+
+      // Чистим кэш превью обложки под этот id, если был
+      try {
+        const coverCacheBase = `${tmpDir()}/cover-cache`;
+        for (const w of [64, 128, 256, 512]) {
+          await rm(`${coverCacheBase}/${w}/${params.id}.jpg`, { force: true });
+        }
+      } catch {
+        // Игнорируем
+      }
 
       return { success: true, id: params.id };
     })

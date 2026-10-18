@@ -18,10 +18,9 @@
 
 import dbus from "dbus-next";
 import { mkdir, rm } from "node:fs/promises";
-import { unlinkSync } from "node:fs";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 // В dbus-next класс Interface живёт в подпакете interface, а не в корне.
 const { Interface } = dbus.interface;
@@ -381,7 +380,13 @@ function orderTracks(tracks) {
       ));
       break;
     case "recent":
-      tracks.sort((a, b) => flip(String(a.lastPlayed || "").localeCompare(String(b.lastPlayed || ""))));
+      tracks.sort((a, b) => {
+        // null / unplayed всегда в конце, как и на сервере
+        const aPlayed = a.lastPlayed ? 1 : 0;
+        const bPlayed = b.lastPlayed ? 1 : 0;
+        if (aPlayed !== bPlayed) return bPlayed - aPlayed;
+        return flip(String(a.lastPlayed || "").localeCompare(String(b.lastPlayed || "")));
+      });
       break;
     case "newest":
       tracks.sort((a, b) => flip(String(a.createdAt || "").localeCompare(String(b.createdAt || ""))));
@@ -700,30 +705,35 @@ function sleep(ms) {
 // Виджет пишет строку "mode [asc|desc]" на смену вида; мост пересортирует
 // очередь теми же ключами, что и список. До первого сообщения — album/asc.
 try {
+  mkdirSync(dirname(SORT_SOCKET_PATH), { recursive: true });
   unlinkSync(SORT_SOCKET_PATH);
 } catch {
   // не было
 }
 
-Bun.listen({
-  unix: SORT_SOCKET_PATH,
-  socket: {
-    open: () => {},
-    close: () => {},
-    error: () => {},
-    data: (_sock, chunk) => {
-      const line = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-      for (const one of line.split("\n")) {
-        const parts = one.trim().split(/\s+/);
-        if (parts[0] === "" || !QUEUE_SORT_MODES.includes(parts[0])) continue;
-        state.queueSort = { mode: parts[0], desc: parts[1] === "desc" };
-        console.log("queue sort:", state.queueSort.mode, state.queueSort.desc ? "desc" : "asc");
-        // Пересборка на месте: играющий трек остаётся, «next» идёт по виду.
-        void refreshQueue();
-      }
+try {
+  Bun.listen({
+    unix: SORT_SOCKET_PATH,
+    socket: {
+      open: () => {},
+      close: () => {},
+      error: () => {},
+      data: (_sock, chunk) => {
+        const line = typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+        for (const one of line.split("\n")) {
+          const parts = one.trim().split(/\s+/);
+          if (parts[0] === "" || !QUEUE_SORT_MODES.includes(parts[0])) continue;
+          state.queueSort = { mode: parts[0], desc: parts[1] === "desc" };
+          console.log("queue sort:", state.queueSort.mode, state.queueSort.desc ? "desc" : "asc");
+          // Пересборка на месте: играющий трек остаётся, «next» идёт по виду.
+          void refreshQueue();
+        }
+      },
     },
-  },
-});
+  });
+} catch (err) {
+  console.warn(`* сорт-сокет недоступен (${SORT_SOCKET_PATH}):`, err?.message ?? err);
+}
 
 /** Сервер может подниматься вместе со стартом юнита: подождать. */
 async function fetchTracks() {
@@ -753,7 +763,7 @@ async function superviseMpv() {
     state.loaded = false;
     setPlaying(false);
     await rm(MPV_PATH, { force: true });
-    await mkdir(MPV_PATH.replace("/mpv.sock", ""), { recursive: true });
+    await mkdir(dirname(MPV_PATH), { recursive: true });
 
     mpvProc = Bun.spawn(
       [
@@ -827,6 +837,11 @@ function shutdown() {
       await bus.close();
     } catch {
       // Шина могла отвалиться сама — не важно, мы же выходим.
+    }
+    try {
+      unlinkSync(SORT_SOCKET_PATH);
+    } catch {
+      // Игнорируем
     }
     if (mpvProc) mpvProc.kill();
     process.exit(0);

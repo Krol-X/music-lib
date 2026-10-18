@@ -1,7 +1,6 @@
-import { unlinkSync } from "node:fs";
 import { db } from "./db";
 import { buildApp, ensureDirs, sweepTmp } from "./app";
-import { pushSocketPath } from "./push";
+import { startPushServer, stopPushServer } from "./push";
 
 const HOST = process.env.MUSICLIB_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.MUSICLIB_PORT ?? "3000", 10);
@@ -19,7 +18,7 @@ function shutdown(signal: string) {
     try {
       // Push-канал: мёртвый сокет не нужен следующему запуску — имя должно
       // быть свободно к рестарту юнита.
-      unlinkSync(pushSocketPath);
+      stopPushServer();
     } catch {
       // Не было — норм.
     }
@@ -36,6 +35,7 @@ if (import.meta.main) {
   const [, applied] = await db.migrate.latest();
   if (applied.length > 0) console.log(`* миграции: ${applied.join(", ")}`);
 
+  startPushServer();
   app.listen({ hostname: HOST, port: PORT });
 
   console.log(`* Elysia is running at http://${HOST}:${PORT}`);

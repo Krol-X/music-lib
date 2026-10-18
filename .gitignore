@@ -48,3 +48,5 @@ package-lock.json
 *.sqlite-journal
 *.sqlite-wal
 *.sqlite-shm
+__pycache__/
+*.pyc

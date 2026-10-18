@@ -74,7 +74,7 @@ export async function markTrackPlayed(
   const now = new Date().toISOString().slice(0, 19).replace("T", " ");
   const update: Record<string, string | number | Knex.Raw> = {
     last_played_at: now,
-    play_count: db.raw("play_count + 1"),
+    play_count: db.raw("coalesce(play_count, 0) + 1"),
   };
   // Мост знает фактическую длину лучше, чем пустая строка БД у рипов без
   // тегов: разовый fill — потом правится руками как любое поле.
@@ -89,8 +89,11 @@ export async function markTrackPlayed(
 /** sqlite "2026-01-17 13:33:42" → ISO "2026-01-17T13:33:42Z"; Date → ISO. */
 function isoTimestamp(value: unknown): string | null {
   if (value instanceof Date) return value.toISOString();
-  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(value)) {
-    return `${value.slice(0, 10)}T${value.slice(11)}Z`;
+  if (typeof value === "string") {
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d+)?$/.test(value)) {
+      return `${value.slice(0, 10)}T${value.slice(11, 19)}Z`;
+    }
+    return value;
   }
   return value === null || value === undefined ? null : String(value);
 }
