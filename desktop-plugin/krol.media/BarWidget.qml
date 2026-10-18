@@ -1049,6 +1049,8 @@ BarWidget {
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
                   elide: Text.ElideRight
+                  height: parent.height
+                  verticalAlignment: Text.AlignVCenter
                   width: parent.width - uploadPanelCol.upDownWidth - Style.space(6)
                 }
 
@@ -1068,6 +1070,8 @@ BarWidget {
                     : Qt.darker(root.bar.foreground, 1.4)
                   font.family: root.bar.fontFamily
                   font.pixelSize: Style.font.caption
+                  height: parent.height
+                  verticalAlignment: Text.AlignVCenter
                   horizontalAlignment: Text.AlignRight
                 }
 
@@ -1079,7 +1083,7 @@ BarWidget {
                   opacity: enabled ? 1.0 : 0.4
                   iconText: "✕"
                   iconSize: Style.font.body
-                  height: Style.space(22)
+                  height: parent.height
                   horizontalPadding: Style.space(6)
                   verticalPadding: 0
                   foreground: Qt.darker(root.bar.foreground, 1.3)
