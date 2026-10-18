@@ -698,6 +698,33 @@ BarWidget {
           onClicked: if (root.activePlayer) root.activePlayer.shuffle = !(root.activePlayer.shuffle ?? false)
         }
 
+        // Повтор: None → Playlist → Track → None, пишем в loopState моста.
+        // Внимание: loopState в Quickshell — числовой enum MprisLoopState
+        // (None=0, Track=1, Playlist=2), а не строка MPRIS "None"/"Track"/...
+        // Глиф свой на режим (codepoints из cmap Nerd Font): repeat,
+        // repeat-once, repeat-off — путаницы с «выкл» больше нет.
+        Button {
+          iconText: !root.activePlayer || root.activePlayer.loopState === MprisLoopState.None
+            ? String.fromCodePoint(0xF0457) // nf-md-repeat-off
+            : root.activePlayer.loopState === MprisLoopState.Track
+              ? String.fromCodePoint(0xF0458) // nf-md-repeat-once
+              : String.fromCodePoint(0xF0456) // nf-md-repeat
+          foreground: root.activePlayer && root.activePlayer.loopState !== MprisLoopState.None
+            ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
+          tooltipText: "repeat: off / playlist / one track"
+          iconSize: Style.font.iconLarge
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY
+          enabled: root.activePlayer !== null && !root.emptyLib
+          opacity: enabled ? 1.0 : 0.4
+          onClicked: {
+            if (!root.activePlayer) return
+            const cur = root.activePlayer.loopState
+            root.activePlayer.loopState = cur === MprisLoopState.None ? MprisLoopState.Playlist
+              : cur === MprisLoopState.Playlist ? MprisLoopState.Track : MprisLoopState.None
+          }
+        }
+
         Button {
           iconText: "󰒮"
           foreground: root.bar.foreground
@@ -729,33 +756,6 @@ BarWidget {
           enabled: root.activePlayer && root.activePlayer.canGoNext && !root.emptyLib
           opacity: enabled ? 1.0 : 0.4
           onClicked: if (root.mediaService) root.mediaService.runAction("next", false, root.mediaService.playerKey(root.activePlayer))
-        }
-
-        // Повтор: None → Playlist → Track → None, пишем в loopState моста.
-        // Внимание: loopState в Quickshell — числовой enum MprisLoopState
-        // (None=0, Track=1, Playlist=2), а не строка MPRIS "None"/"Track"/...
-        // Глиф свой на режим (codepoints из cmap Nerd Font): repeat,
-        // repeat-once, repeat-off — путаницы с «выкл» больше нет.
-        Button {
-          iconText: !root.activePlayer || root.activePlayer.loopState === MprisLoopState.None
-            ? String.fromCodePoint(0xF0457) // nf-md-repeat-off
-            : root.activePlayer.loopState === MprisLoopState.Track
-              ? String.fromCodePoint(0xF0458) // nf-md-repeat-once
-              : String.fromCodePoint(0xF0456) // nf-md-repeat
-          foreground: root.activePlayer && root.activePlayer.loopState !== MprisLoopState.None
-            ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
-          tooltipText: "repeat: off / playlist / one track"
-          iconSize: Style.font.iconLarge
-          horizontalPadding: Style.spacing.controlPaddingX
-          verticalPadding: Style.spacing.controlPaddingY
-          enabled: root.activePlayer !== null && !root.emptyLib
-          opacity: enabled ? 1.0 : 0.4
-          onClicked: {
-            if (!root.activePlayer) return
-            const cur = root.activePlayer.loopState
-            root.activePlayer.loopState = cur === MprisLoopState.None ? MprisLoopState.Playlist
-              : cur === MprisLoopState.Playlist ? MprisLoopState.Track : MprisLoopState.None
-          }
         }
 
         // Заливка: трей-иконка в конце ряда, последний в ряду транспорта. Не
