@@ -679,7 +679,7 @@ BarWidget {
         // подсвечивается, пока очередь бежит. Панель открывается по клику.
         Button {
           visible: root.uploadItems.length > 0 || root.uploadBusy
-          iconText: String.fromCodePoint(0xF1BE) // nf-md-tray-arrow-up
+          iconText: String.fromCodePoint(0xF0552) // nf-md-upload (cmap + на глаз)
           foreground: root.uploadBusy ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.2)
           iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
@@ -1015,8 +1015,8 @@ BarWidget {
           Button {
             id: clearFailedBtn
             visible: !root.uploadBusy && root.uploadFail > 0
-            height: Style.space(24)
-            fontSize: Style.font.caption
+            height: Style.space(26)
+            fontSize: Style.font.bodySmall
             text: "clear failed"
             foreground: root.bar.foreground
             onClicked: root.clearUploadRows(["fail"])
@@ -1025,8 +1025,8 @@ BarWidget {
           Button {
             id: clearAllBtn
             visible: !root.uploadBusy && root.uploadItems.length > 0
-            height: Style.space(24)
-            fontSize: Style.font.caption
+            height: Style.space(26)
+            fontSize: Style.font.bodySmall
             text: "clear all"
             foreground: root.bar.foreground
             onClicked: root.clearUploadRows(null)
@@ -1035,8 +1035,8 @@ BarWidget {
           Button {
             id: cancelBtn
             visible: root.uploadBusy
-            height: Style.space(24)
-            fontSize: Style.font.caption
+            height: Style.space(26)
+            fontSize: Style.font.bodySmall
             text: "cancel"
             foreground: root.bar.foreground
             onClicked: root.uploadCancel()
@@ -1108,10 +1108,11 @@ BarWidget {
                   enabled: !root.uploadBusy
                   opacity: enabled ? 1.0 : 0.4
                   iconText: "✕"
-                  iconSize: Style.font.caption
-                  horizontalPadding: Style.space(2)
+                  iconSize: Style.font.body
+                  height: Style.space(22)
+                  horizontalPadding: Style.space(6)
                   verticalPadding: 0
-                  foreground: Qt.darker(root.bar.foreground, 1.4)
+                  foreground: Qt.darker(root.bar.foreground, 1.3)
                   onClicked: root.removeUploadRow(index)
                 }
               }
