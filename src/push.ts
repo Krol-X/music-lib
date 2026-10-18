@@ -45,12 +45,8 @@ export const push = Bun.listen({
   },
 });
 
-export function broadcastPlayed(payload: {
-  trackId: string;
-  lastPlayed: string;
-  playCount: number;
-}): void {
-  const line = JSON.stringify({ event: "played", ...payload }) + "\n";
+/** Общая рассылка строки; dead-клиенты молча отрезаем. */
+function broadcastLine(line: string): void {
   for (const sock of clients) {
     try {
       sock.write(line);
@@ -58,4 +54,17 @@ export function broadcastPlayed(payload: {
       clients.delete(sock);
     }
   }
+}
+
+/** Прогресс конвертации наружу: у виджета строки c NN%. */
+export function broadcastConvert(payload: { name: string; pct: number }): void {
+  broadcastLine(JSON.stringify({ event: "convert", ...payload }) + "\n");
+}
+
+export function broadcastPlayed(payload: {
+  trackId: string;
+  lastPlayed: string;
+  playCount: number;
+}): void {
+  broadcastLine(JSON.stringify({ event: "played", ...payload }) + "\n");
 }

@@ -1,4 +1,5 @@
 import { mkdir, rename, rm } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
 import sharp from "sharp";
@@ -16,7 +17,7 @@ import { readTags, toColumns, type TrackTags } from "./audio/tags";
 import { extractCover, coverMime } from "./audio/cover";
 import { resolveTags, type MetaSource } from "./audio/filename-tags";
 import { listTracks, markTrackPlayed, patchToColumns, trackToJson, type PatchBody } from "./tracks";
-import { broadcastPlayed, pushSocketPath } from "./push";
+import { broadcastPlayed, broadcastConvert, pushSocketPath } from "./push";
 
 /**
  * Каталоги вычисляются на вызов: тесты задают MUSICLIB_STORAGE в
@@ -81,11 +82,16 @@ async function convertToOpus(
   sourcePath: string,
   outputPath: string,
   bitrate: string,
+  progress: { name: string; durationSec: number | null },
 ): Promise<string[]> {
   // ffmpeg открывает stdout на append, поэтому старый .part надо убрать,
   // иначе повторная конвертация допишет в конец.
   await rm(outputPath, { force: true });
 
+  // Прогресс наружу: ffmpeg пишет key=value в отдельный файл, сервер
+  // опрашивает его таймером и рапортует имя+N% в push-канал. Конвертация —
+  // длинная фаза заливки, у виджета иначе только «converting…» без цифры.
+  const progressPath = `${tmpDir()}/${crypto.randomUUID()}.progress`;
   const proc = Bun.spawn(
     [
       "ffmpeg",
@@ -98,17 +104,44 @@ async function convertToOpus(
       "-vbr", "on",
       "-compression_level", "10",
       "-f", "opus",
+      "-progress", progressPath,
       "pipe:1",
     ],
     { stdout: Bun.file(outputPath), stderr: "pipe" },
   );
 
-  const err = await new Response(proc.stderr).text();
-  const code = await proc.exited;
+  const duration = progress.durationSec ?? 0;
+  let lastPct = -1;
+  const report = setInterval(() => {
+    if (duration <= 0) return;
+    try {
+      const text = readFileSync(progressPath, "utf8");
+      const matches = text.matchAll(/out_time_us=(\d+)/g);
+      let last: RegExpExecArray | null = null;
+      for (const m of matches) last = m as RegExpExecArray;
+      if (!last) return;
+      const pct = Math.min(99, Math.round((Number(last[1]) / 1e6 / duration) * 100));
+      if (pct !== lastPct) {
+        lastPct = pct;
+        broadcastConvert({ name: progress.name, pct });
+      }
+    } catch {
+      // Файла ещё нет / только что снесён — тик пропускается.
+    }
+  }, 400);
 
-  if (code !== 0) {
+  let err = "";
+  try {
+    err = await new Response(proc.stderr).text();
+    await proc.exited;
+  } finally {
+    clearInterval(report);
+    await rm(progressPath, { force: true });
+  }
+
+  if (proc.exitCode !== 0) {
     await rm(outputPath, { force: true });
-    throw new Error(`ffmpeg exited with ${code}: ${err.trim()}`);
+    throw new Error(`ffmpeg exited with ${proc.exitCode}: ${err.trim()}`);
   }
 
   return err.trim().length === 0 ? [] : err.trim().split("\n").map((l) => `ffmpeg: ${l}`);
@@ -290,7 +323,11 @@ async function runUploadPipeline(db: Knex, file: File): Promise<UploadResult> {
     // вообще имеет смысл. analyzeQuality не бросает исключений — при неудаче
     // просто вернётся 160k.
     const quality = await analyzeQuality(uploadPath);
-    const ffmpegWarnings = await convertToOpus(uploadPath, partPath, quality.opusBitrate);
+    const ffmpegWarnings = await convertToOpus(uploadPath, partPath, quality.opusBitrate, {
+      // Ключ для push-сообщений: до вставки в БД у трека есть только имя.
+      name: file.name,
+      durationSec: input.durationSec,
+    });
 
     // Сверяем, во что конвертация превратилась. Обрезанный MP3 даёт код 0 и
     // валидный Opus, поэтому единственный способ это заметить — сравнить

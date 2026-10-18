@@ -114,6 +114,20 @@ BarWidget {
     return items
   }
 
+  // Индекс единственной подсвечиваемой строки: первый матч «сейчас играет»
+  // по title+artist в текущем виде списка. Дубли (одинаковые теги) горят
+  // только один раз — первая строка, остальные нейтральны.
+  readonly property int currentPlaylistRow: {
+    if (!root.activePlayer) return -1
+    const t = root.activePlayer.trackTitle ?? ""
+    const a = root.activePlayer.trackArtist ?? ""
+    for (let i = 0; i < root.playlist.length; i++) {
+      const it = root.playlist[i]
+      if ((it.title ?? "") === t && (it.artist ?? "") === a) return i
+    }
+    return -1
+  }
+
   // Мягко показать то, что играется: при открытии попапа прокрутить список
   // к текущей строке, чтобы она была не где-то за экраном.
   property bool scrollPending: false
@@ -146,10 +160,12 @@ BarWidget {
 
   property bool uploadBusy: false
   // Очередь: {path, name, state: pending|uploading|ok|fail, pct, resp}.
-  // Проценты теперь РАСТУТ внутри каждого элемента: воркеров трое — маркер
-  // p:NN% идёт вперемешку, перегенерация массива только на смене состояния.
-  // resp — последняя строка {} от сервера (параллельно глобальной не живут).
+  // Проценты теперь РАСТУТ внутри воркеров (uploading-фаза), а фаза c NN%
+  // (конвертация сервером) идёт через push в convertMap: тики не трогают
+  // массив — Repeater строки не пересобирает.
   property var uploadItems: []
+  // Имя файла → % конвертации на сервере (event "convert").
+  property var convertMap: ({})
   property int uploadOk: 0
   property int uploadFail: 0
   // Параллелизм 3: пока конвертируется один, следующий заливается.
@@ -280,6 +296,7 @@ BarWidget {
     uploadCancelled = false
     uploadLastError = ""
     uploadBusy = true
+    convertMap = ({})
     uploadItems = paths.map(function(p) {
       const base = p.slice(p.lastIndexOf("/") + 1)
       return { path: p, name: base === "" ? p : base, state: "pending", pct: 0 }
@@ -370,6 +387,7 @@ BarWidget {
     // Отмена или конец пачки: сработавшие после kill воркеры — перезапуск
     // очереди здесь был бы воскрешением отменённой заливки.
     if (!uploadBusy) return
+    const doneName = uploadItems[idx].name
     let ok = false
     let msg = "server did not respond"
     try {
@@ -381,8 +399,17 @@ BarWidget {
     }
     wk.resp = ""
     markItem(idx, ok ? "ok" : "fail")
+    purgeConvert(doneName)
     if (!ok) { uploadFail++; uploadLastError = msg; editStatus = msg; editError = true }
     pumpUpload()
+  }
+
+  // Строка кончила жить — вычистить её конвертацию из карты.
+  function purgeConvert(name) {
+    if (!(name in root.convertMap)) return
+    const m = Object.assign({}, root.convertMap)
+    delete m[name]
+    root.convertMap = m
   }
 
   // Автопрокрутка панели заливки: следим за последним бегущим «→», чтобы
@@ -565,10 +592,26 @@ BarWidget {
       splitMarker: "\n"
       onRead: function(data) {
         console.log("плейлист: пуш прилетел:", String(data).slice(0, 60))
-        if (!root.popupOpen || root.sortIndex !== 2 || root.sortMenuOpen) return
         try {
           const ev = JSON.parse(String(data))
+          if (ev && ev.event === "convert") {
+            // Прогресс конвертации: карта имя → %, отдельная от uploadItems —
+            // тики не пересобирают массив и строки Repeater'а.
+            const name = String(ev.name ?? "")
+            if (name === "") return
+            let alive = false
+            for (let i = 0; i < root.uploadItems.length; i++) {
+              const it = root.uploadItems[i]
+              if (it.name === name && it.state !== "ok" && it.state !== "fail") { alive = true; break }
+            }
+            if (!alive) return
+            const m = Object.assign({}, root.convertMap)
+            m[name] = Number(ev.pct ?? 0)
+            root.convertMap = m
+            return
+          }
           if (ev && ev.event === "played") {
+            if (!root.popupOpen || root.sortIndex !== 2 || root.sortMenuOpen) return
             console.log("плейлист: пуш 'played' получен")
             root.loadLibrary()
           }
@@ -1222,7 +1265,12 @@ BarWidget {
                   // Байты дошли до 100%, но сервер ещё конвертирует и пишет
                   // базу — до ответа это не «готово», а конвертация.
                   text: modelData.state === "uploading"
-                    ? (pct < 100 ? pct + "%" : "converting…")
+                    ? (pct < 100
+                        ? "u " + pct + "%"
+                        // Фаза конвертации: честный процент из push-канала;
+                        // до первого тика — «c ·».
+                        : "c " + (modelData.name in root.convertMap
+                          ? root.convertMap[modelData.name] : "·") + "%")
                     : modelData.state === "ok" ? "✓"
                     : modelData.state === "fail" ? "✕" : "—"
                   color: modelData.state === "fail" ? Commons.Color.accent
@@ -1349,10 +1397,12 @@ BarWidget {
 
             Item {
               required property var modelData
+              required property int index
 
-              readonly property bool isCurrent: root.activePlayer
-                && (modelData.title ?? "") === (root.activePlayer.trackTitle ?? "")
-                && (modelData.artist ?? "") === (root.activePlayer.trackArtist ?? "")
+              // Подсветка «сейчас играет»: матч по title+artist, но при
+              // дублях (одинаковые теги, разные издания/файлы) горит ТОЛЬКО
+              // первая строка — root.currentPlaylistRow считает её один раз.
+              readonly property bool isCurrent: root.currentPlaylistRow === index
 
               // В режиме «недавно прослушанные» к строке добавляется штамп:
               // сервер хранит время в UTC-ISO, Date его читает как UTC —
