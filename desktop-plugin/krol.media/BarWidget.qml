@@ -782,10 +782,7 @@ BarWidget {
           onClicked: if (root.mediaService) root.mediaService.runAction("next", false, root.mediaService.playerKey(root.activePlayer))
         }
 
-        // Заливка треков: иконка без подписи, всплывает подсказка.
-        // Открывает zenity-диалог и цепочку curl-заливок; перед диалогом
       }
-    }
 
       // Пустая библиотека: вместо мёртвых метаданных моста — одна внятная
       // подсказка, единственное живое действие остаётся «＋» в транспорте.
