@@ -49,6 +49,9 @@ BarWidget {
   property int sortIndex: 1 // 0 название, 1 альбом, 2 исполнитель, 3 недавно, 4 новые
   readonly property var sortLabels: ["название", "альбом", "исполнитель", "недавно прослушанные", "новые"]
   readonly property string sortLabel: sortLabels[sortIndex]
+  // На кнопке — короткая подпись: длинное «недавно прослушанные» съедало
+  // ширину строки поиска. Полные названия — в меню выбора.
+  readonly property var sortShortLabels: ["название", "альбом", "исполнитель", "недавно", "новые"]
   property bool orderDesc: false
   readonly property var sortDefaultDesc: [false, false, false, true, true]
   // «Селект» режима: меню выбора рисуется на месте плейлиста.
@@ -82,6 +85,11 @@ BarWidget {
       })
     }
     items = items.slice()
+    // Режим «недавно прослушанные» показывает только то, что играло:
+    // никогда не пахие треки (lastPlayed null) убраны из вида совсем.
+    if (root.sortIndex === 3) {
+      items = items.filter(function(t) { return !!t.lastPlayed })
+    }
     const num = function(x) { return x === null || x === undefined ? 0 : Number(x) }
     const flip = function(c) { return root.orderDesc ? -c : c }
     if (root.sortIndex === 0) {
@@ -339,14 +347,46 @@ BarWidget {
     onTriggered: root.scrollToCurrent()
   }
 
-  // «Недавно прослушанные» живёт: мост шлёт штамп прямо на 30-й секунде
-  // звучания, а таймер, пока попап открыт в этом режиме, подслушивает
-  // сервер раз в полминуты — играющий трек всплывает вверх по-живому.
+  // Push-канал «played»: сервер слушает unix-сокет в XDG_RUNTIME_DIR и шлёт
+  // строку JSON за \n на каждый штамп прослушивания. «Недавно прослушанные»
+  // поднимает трек по-живому, не дожидаясь (пере)открытия попапа.
+  Socket {
+    id: pushSock
+    path: Quickshell.env("XDG_RUNTIME_DIR") + "/music-lib-push.sock"
+    parser: SplitParser {
+      splitMarker: "\n"
+      onRead: function(data) {
+        if (!root.popupOpen || root.sortIndex !== 3 || root.sortMenuOpen) return
+        try {
+          const ev = JSON.parse(String(data))
+          if (ev && ev.event === "played") root.loadLibrary()
+        } catch (e) {
+          // Мусорная строка не должна ронять подписку — игнорим.
+          console.warn("плейлист: пуш не разобран:", e)
+        }
+      }
+    }
+    // Клиент коннектится сам при рождении; рестарт сервера закрывает
+    // соединение и трогает reconnectTimer через onConnectedChanged.
+    Component.onCompleted: connected = true
+  }
+
+  // Контрольный поллинг: сокет может чихнуть (рестарт сервера), редкий
+  // запрос раз в 15 секунд ничего не стоит — страховкой от пропущенных
+  // событий при живом попапе.
   Timer {
-    interval: 30000
+    id: recentPollTimer
+    interval: 15000
     repeat: true
     running: root.popupOpen && root.isOurPlayer && root.sortIndex === 3 && !root.sortMenuOpen
     onTriggered: root.loadLibrary()
+  }
+  // Реконнект push-сокета: сервер мог рестартнуться — пробуем снова.
+  Timer {
+    id: reconnectTimer
+    interval: 3000
+    repeat: false
+    onTriggered: if (pushSock) pushSock.connected = true
   }
 
   // Quickshell не перетикает position сам: по докам заставляем его сигнал
@@ -753,7 +793,8 @@ BarWidget {
 
         TextField {
           id: filterField
-          width: parent.width - sortCycle.implicitWidth - orderBtn.implicitWidth - Style.space(12)
+          width: Math.max(Style.space(120),
+            parent.width - sortCycle.implicitWidth - orderBtn.implicitWidth - Style.space(12))
           height: parent.height
           placeholderText: "поиск: название / исполнитель / альбом"
           foreground: root.bar.foreground
@@ -763,7 +804,7 @@ BarWidget {
         Button {
           id: sortCycle
           height: parent.height
-          text: root.sortLabel
+          text: root.sortShortLabels[sortIndex]
           foreground: root.sortMenuOpen ? Commons.Color.accent : root.bar.foreground
           onClicked: root.sortMenuOpen = !root.sortMenuOpen
         }
@@ -834,7 +875,7 @@ BarWidget {
               // и форматирует уже в местном времени, без секунд.
               readonly property string lastPlayedLabel: root.sortIndex === 3
                 && modelData.lastPlayed
-                ? Qt.formatDateTime(new Date(modelData.lastPlayed), "dd.MM HH:mm")
+                ? Qt.formatDateTime(new Date(modelData.lastPlayed), "dd.MM.yy HH:mm")
                 : ""
 
               readonly property real pad: Style.space(6)
@@ -961,7 +1002,8 @@ BarWidget {
         visible: root.isOurPlayer && root.library.length > 0 && root.playlist.length === 0 && root.editingTrack === null
         width: parent.width
         textFormat: Text.PlainText
-        text: "ничего не найдено"
+        text: root.sortIndex === 3 && filterField.text.trim() === ""
+          ? "пока ничего не прослушано" : "ничего не найдено"
         color: Qt.darker(root.bar.foreground, 1.6)
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.caption

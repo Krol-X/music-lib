@@ -1,5 +1,7 @@
+import { unlinkSync } from "node:fs";
 import { db } from "./db";
 import { buildApp, ensureDirs, sweepTmp } from "./app";
+import { pushSocketPath } from "./push";
 
 const HOST = process.env.MUSICLIB_HOST ?? "127.0.0.1";
 const PORT = Number.parseInt(process.env.MUSICLIB_PORT ?? "3000", 10);
@@ -13,6 +15,13 @@ function shutdown(signal: string) {
       app.stop(true);
     } catch {
       // Может не остановиться, если сервер ещё не начал слушать.
+    }
+    try {
+      // Push-канал: мёртвый сокет не нужен следующему запуску — имя должно
+      // быть свободно к рестарту юнита.
+      unlinkSync(pushSocketPath);
+    } catch {
+      // Не было — норм.
     }
     await db.destroy();
     process.exit(0);
