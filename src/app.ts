@@ -23,8 +23,6 @@ import { broadcastPlayed, pushSocketPath } from "./push";
  * beforeAll, уже после импорта модуля, и ничего не рвётся.
  */
 const storageDir = () => process.env.MUSICLIB_STORAGE ?? "./storage";
-/** Как файл пришёл: для перекодирования в другой битрейт и для обложек. */
-const originalDir = () => `${storageDir()}/original`;
 /** Что мы отдаём на прослушивание. */
 const audioDir = () => `${storageDir()}/audio`;
 /** Обложки, извлечённые из тегов. */
@@ -33,7 +31,7 @@ const coverDir = () => `${storageDir()}/cover`;
 const tmpDir = () => `${storageDir()}/tmp`;
 
 export async function ensureDirs() {
-  for (const dir of [originalDir(), audioDir(), coverDir(), tmpDir()]) {
+  for (const dir of [audioDir(), coverDir(), tmpDir()]) {
     await mkdir(dir, { recursive: true });
   }
 }
@@ -300,10 +298,12 @@ async function runUploadPipeline(db: Knex, file: File): Promise<UploadResult> {
     const conversion = await checkConversion(uploadPath, partPath, input);
 
     // Всё проверено — только теперь трогаем постоянное хранилище.
-    const originalPath = `${originalDir()}/${id}.${ext}`;
+    // Оригинал не храним: слушаем всегда Opus, а параметры источника
+    // (битрейт/обрез/длительность) analyzeQuality уже насчитал. Экономим
+    // место — файлы на диске после этого не хранятся в двух экземплярах.
     const opus = `${audioDir()}/${id}.opus`;
-    await rename(uploadPath, originalPath);
     await rename(partPath, opus);
+    // uploadPath за собой убирает finally, как и при любом отказе.
 
     // Обложка не обязательна: её битость или отсутствие — не повод отказывать
     // треку, звук уже проверен и лежит на месте.
@@ -373,7 +373,8 @@ async function runUploadPipeline(db: Knex, file: File): Promise<UploadResult> {
       ],
     };
   } finally {
-    // К этому моменту rename уже унёс файлы, а после отказа остаётся мусор.
+    // Успех: rename уже унёс .part, а uploadPath (бывший оригинал) больше не
+    // нужен. После отказа здесь остаются оба черновика — убираем.
     await rm(uploadPath, { force: true });
     await rm(partPath, { force: true });
   }
@@ -437,9 +438,11 @@ export function buildApp(db: Knex) {
     })
     .post(
       "/tracks/:id/play",
-      { body: t.Object({ duration: t.Optional(t.Number()) }) },
+      // Тело целиком необязательное: curl без -d тоже имеет право на штамп.
+      // Elysia без Optional() отвечает 422 на пустое тело.
+      { body: t.Optional(t.Object({ duration: t.Optional(t.Number()) })) },
       async ({ params, body }) => {
-        const duration = typeof body.duration === "number" ? body.duration : null;
+        const duration = typeof body?.duration === "number" ? body.duration : null;
         const updated = await markTrackPlayed(db, params.id, duration);
         if (!updated) return errorResponse(404, "трек не найден");
         broadcastPlayed({
@@ -482,12 +485,9 @@ export function buildApp(db: Knex) {
       // указывающий в никуда.
       await db("tracks").where("id", params.id).del();
 
-      const paths = [
-        // Оригинал пути в БД не хранит — он собирается так же, как при записи.
-        `${originalDir()}/${params.id}.${row.ext}`,
-        row.opus_path,
-        row.cover_path,
-      ].filter((p): p is string => typeof p === "string");
+      const paths = [row.opus_path, row.cover_path].filter(
+        (p): p is string => typeof p === "string",
+      );
       await Promise.all(paths.map((p) => rm(p, { force: true })));
 
       return { success: true, id: params.id };

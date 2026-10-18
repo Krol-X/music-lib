@@ -463,13 +463,10 @@ describe("миграция cover_path", () => {
 
 describe("DELETE /tracks/:id", () => {
   test("существующий трек: строка удалена, файлы стёрты", async () => {
-    // Настоящие файлы на диске — DELETE отвечает и за них. Пути строит
-    // сам сервер: original/{id}.{ext}, opus_path и cover_path из БД.
-    const originalPath = join(dir, "original", "track-2.mp3");
+    // Настоящие файлы на диске — DELETE отвечает и за них. Пути он берёт
+    // из БД: opus_path и cover_path.
     const opusPath = join(dir, "track-2.opus");
     const coverPath = join(dir, "track-2-cover.jpg");
-    await mkdir(join(dir, "original"), { recursive: true });
-    await writeFile(join(dir, "original", "track-2.mp3"), "original-bytes");
     await writeFile(opusPath, "opus-bytes");
     await writeFile(coverPath, "cover-bytes");
     await db("tracks").where("id", "track-2").update({
@@ -487,15 +484,13 @@ describe("DELETE /tracks/:id", () => {
     const { body: after } = await getJson("/tracks");
     expect(after.total).toBe(FIXTURES.length - 1);
     expect(ids(after)).not.toContain("track-2");
-    for (const p of [originalPath, opusPath, coverPath]) {
+    for (const p of [opusPath, coverPath]) {
       expect(await Bun.file(p).exists()).toBe(false);
     }
   });
 
-  test("трек без обложки: оригинал и opus стёрты", async () => {
-    const originalPath = join(dir, "original", "track-5.wav");
+  test("трек без обложки: opus стёрт", async () => {
     const opusPath = join(dir, "track-5.opus");
-    await writeFile(originalPath, "original-bytes");
     await writeFile(opusPath, "opus-bytes");
     await db("tracks").where("id", "track-5").update({
       ext: "wav",
@@ -505,7 +500,6 @@ describe("DELETE /tracks/:id", () => {
 
     const { status } = await deleteJson("track-5");
     expect(status).toBe(200);
-    expect(await Bun.file(originalPath).exists()).toBe(false);
     expect(await Bun.file(opusPath).exists()).toBe(false);
   });
 
