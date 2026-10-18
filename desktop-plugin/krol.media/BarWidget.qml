@@ -170,6 +170,7 @@ BarWidget {
     const n = uploadItems.length
     const k = uploadOk + uploadFail
     const pct = Math.round(uploadFrac * 100)
+    if (n === 0 && !uploadBusy) return "no uploads yet"
     if (uploadBusy) return "uploading — " + k + "/" + n + " (" + pct + "%)"
     const base = uploadFail > 0
       ? k + " ok, " + uploadFail + " failed"
@@ -186,7 +187,13 @@ BarWidget {
 
   Process {
     id: pickProc
-    stdout: StdioCollector { onStreamFinished: root.uploadPicked(text) }
+    // Что сейчас делает процесс: 0 — диалог файлов, 1 — диалог папки,
+    // 2 — рекурсивный find по выбранной папке. onStreamFinished смотрит
+    // на него, потому что один Process живёт все три шага.
+    property int mode: 0
+    stdout: StdioCollector {
+      onStreamFinished: root.pickFinished(pickProc.mode, text)
+    }
   }
 
   // Разовая диагностика первого запуска: если python-аплоадер не стартует,
@@ -201,6 +208,7 @@ BarWidget {
     // уходит под виджет. Закрываю себя; после выбора файлов открываю
     // обратно сразу — панель прогресса теперь сама по себе живёт тут.
     if (popupOpen) popupOpen = false
+    pickProc.mode = 0
     pickProc.command = ["zenity", "--file-selection", "--multiple",
       // zenity по умолчанию склеивает пути через "|" — а имя файла может
       // содержать такой символ, да и split по "\n" ниже честнее.
@@ -209,6 +217,49 @@ BarWidget {
       "--file-filter", "Audio | *.mp3 *.flac *.wav *.ogg *.mka *.opus *.aac *.wma *.aiff *.m4a",
       "--file-filter", "All files | *"]
     pickProc.running = true
+  }
+
+  function uploadPickFolder() {
+    if (popupOpen) popupOpen = false
+    pickProc.mode = 1
+    pickProc.command = ["zenity", "--file-selection", "--directory",
+      "--title", "Upload folder to library"]
+    pickProc.running = true
+  }
+
+  function pickFinished(mode, text) {
+    if (mode === 0) {
+      uploadPicked(text)
+      return
+    }
+    if (mode === 1) {
+      // Папка выбрана — гоним find прямо в этой панели (mode 2):
+      // фильтр по аудио-расширениям, рекурсия на любую глубину, sort —
+      // порядок в очереди заливки предсказуем.
+      const dir = String(text).trim()
+      if (dir === "") {
+        popupOpen = true
+        return
+      }
+      pickProc.mode = 2
+      pickProc.command = ["bash", "-c",
+        // Цитирование папке не нужно: find получает её как $@ под выкачкой
+        // bash -c "script" stub args… — скобки и пробелы в путях живы.
+        'find "$@" -type f 2>/dev/null'
+        + " | grep -iE '\\.(mp3|flac|wav|ogg|mka|opus|aac|wma|aiff|m4a)$'"
+        + " | sort",
+        "find", dir]
+      pickProc.running = true
+      return
+    }
+    // mode 2: find отработал.
+    if (String(text).trim() === "") {
+      editError = true
+      editStatus = "no audio files found"
+      popupOpen = true
+      return
+    }
+    uploadPicked(text)
   }
 
   function uploadPicked(text) {
@@ -777,12 +828,8 @@ BarWidget {
           verticalPadding: Style.spacing.controlPaddingY
           tooltipText: "upload progress"
           onClicked: {
-            // Без истории заливок кнопка работает как «добавить файлы» —
-            // отдельная «＋» переехала в панель заливки.
-            if (root.uploadItems.length === 0 && !root.uploadBusy) {
-              root.uploadPick()
-              return
-            }
+            // Экран загрузки открывает трей; сами кнопки выбора файлов
+            // и папок живут внутри панели.
             root.sortMenuOpen = false
             root.uploadPanelOpen = !root.uploadPanelOpen
           }
@@ -939,7 +986,7 @@ BarWidget {
       Column {
         id: uploadPanelCol
         readonly property real upDownWidth: Style.space(40)
-        visible: root.isOurPlayer && root.uploadPanelOpen && root.uploadItems.length > 0
+        visible: root.isOurPlayer && root.uploadPanelOpen
           && root.editingTrack === null
         width: parent.width
         spacing: Style.space(4)
@@ -958,10 +1005,11 @@ BarWidget {
             elide: Text.ElideRight
             height: parent.height
             verticalAlignment: Text.AlignVCenter
-            width: parent.width - (root.uploadBusy ? cancelBtn.implicitWidth : 0)
+            width: parent.width - addFilesBtn.implicitWidth - addFolderBtn.implicitWidth
+              - (root.uploadBusy ? cancelBtn.implicitWidth : 0)
               - (root.uploadFail > 0 && !root.uploadBusy ? clearFailedBtn.implicitWidth : 0)
               - (root.uploadItems.length > 0 && !root.uploadBusy ? clearAllBtn.implicitWidth : 0)
-              - Style.space(12)
+              - Style.space(18)
           }
 
           Button {
@@ -994,9 +1042,10 @@ BarWidget {
             onClicked: root.uploadCancel()
           }
 
-          // Заливка подсадила сюда «＋»: добавить файла к бегущей/готовой
-          // пачке, не выключая панель.
+          // Два способа пополнить очередь на просмотре: «＋» файлы,
+          // вторая кнопка — папка, заливается рекурсивно (find).
           Button {
+            id: addFilesBtn
             height: Style.space(26)
             iconText: "󰐕"
             iconSize: Style.font.caption
@@ -1007,6 +1056,21 @@ BarWidget {
             onClicked: {
               editStatus = ""
               root.uploadPick()
+            }
+          }
+
+          Button {
+            id: addFolderBtn
+            height: Style.space(26)
+            iconText: String.fromCodePoint(0xF07C) // nf-fa-folder-open (проверено рендером)
+            iconSize: Style.font.caption
+            tooltipText: "add a folder (audio files inside, recursively)"
+            foreground: root.bar.foreground
+            enabled: !root.uploadBusy
+            opacity: enabled ? 1.0 : 0.4
+            onClicked: {
+              editStatus = ""
+              root.uploadPickFolder()
             }
           }
         }
