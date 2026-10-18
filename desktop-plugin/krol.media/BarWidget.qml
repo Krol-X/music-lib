@@ -41,19 +41,14 @@ BarWidget {
   // уже в секундах). Ноль — перемотка не показываем вовсе.
   readonly property real trackLength: activePlayer ? (activePlayer.length ?? 0) : 0
 
-  // Сортировка плейлиста — локальная, по уже скачанному списку. Пять
-  // режимов и направление; дефолты честные: «недавно прослушанные» и
-  // «новые» смотрим сверху вниз по времени (desc), текстовые поля — по
-  // алфавиту (asc). По умолчанию альбом: стартовый вид совпадает с
-  // порядком очереди моста.
-  property int sortIndex: 1 // 0 название, 1 альбом, 2 исполнитель, 3 недавно, 4 новые
-  readonly property var sortLabels: ["название", "альбом", "исполнитель", "недавно прослушанные", "новые"]
+  // Сортировка плейлиста — локальная, по уже скачанному списку. Четыре
+  // режима и направление; дефолты честные: «Recent» и «Newest» смотрим
+  // сверху вниз по времени (desc), текстовые поля — по алфавиту (asc).
+  property int sortIndex: 0 // 0 Title, 1 Artist, 2 Recent, 3 Newest
+  readonly property var sortLabels: ["Title", "Artist", "Recent", "Newest"]
   readonly property string sortLabel: sortLabels[sortIndex]
-  // На кнопке — короткая подпись: длинное «недавно прослушанные» съедало
-  // ширину строки поиска. Полные названия — в меню выбора.
-  readonly property var sortShortLabels: ["название", "альбом", "исполнитель", "недавно", "новые"]
   property bool orderDesc: false
-  readonly property var sortDefaultDesc: [false, false, false, true, true]
+  readonly property var sortDefaultDesc: [false, false, true, true]
   // «Селект» режима: меню выбора рисуется на месте плейлиста.
   property bool sortMenuOpen: false
 
@@ -72,8 +67,7 @@ BarWidget {
   // исполнитель, альбом) плюс сортировка в выбранном режиме и направлении.
   // Порядок очереди моста от этого независим — он всегда album/asc с
   // сервера; здесь только взгляд глазами. Направление — переворот
-  // компаратора, кроме «недавно»: никогда не игравшие в конце при любом
-  // направлении, свежие сверху по умолчанию.
+  // компаратора.
   readonly property var playlist: {
     const q = filterField.text.trim().toLowerCase()
     let items = root.library
@@ -85,9 +79,9 @@ BarWidget {
       })
     }
     items = items.slice()
-    // Режим «недавно прослушанные» показывает только то, что играло:
-    // никогда не пахие треки (lastPlayed null) убраны из вида совсем.
-    if (root.sortIndex === 3) {
+    // Режим «Recent» показывает только то, что играло: непрослушанные
+    // треки (lastPlayed null) убраны из вида совсем.
+    if (root.sortIndex === 2) {
       items = items.filter(function(t) { return !!t.lastPlayed })
     }
     const num = function(x) { return x === null || x === undefined ? 0 : Number(x) }
@@ -98,24 +92,14 @@ BarWidget {
       })
     } else if (root.sortIndex === 1) {
       items.sort(function(a, b) {
-        return flip(String(a.album || "").localeCompare(String(b.album || ""))
-          || num(a.year) - num(b.year)
-          || num(a.discNo) - num(b.discNo)
-          || num(a.trackNo) - num(b.trackNo))
-      })
-    } else if (root.sortIndex === 2) {
-      items.sort(function(a, b) {
         return flip(String(a.artist || "").localeCompare(String(b.artist || ""))
           || String(a.album || "").localeCompare(String(b.album || ""))
           || num(a.discNo) - num(b.discNo)
           || num(a.trackNo) - num(b.trackNo))
       })
-    } else if (root.sortIndex === 3) {
+    } else if (root.sortIndex === 2) {
       items.sort(function(a, b) {
-        // Никогда не игравшие (lastPlayed null) всегда после игравших.
-        const aNull = !a.lastPlayed
-        const bNull = !b.lastPlayed
-        if (aNull || bNull) return aNull === bNull ? 0 : (aNull ? 1 : -1)
+        // lastPlayed здесь есть всегда (фильтр выше), остаются только даты.
         return flip(String(a.lastPlayed).localeCompare(String(b.lastPlayed)))
       })
     } else {
@@ -176,9 +160,9 @@ BarWidget {
     reopenAfterUpload = popupOpen
     if (popupOpen) popupOpen = false
     pickProc.command = ["zenity", "--file-selection", "--multiple",
-      "--title", "Залить в библиотеку",
-      "--file-filter", "Аудио | *.mp3 *.flac *.wav *.ogg *.mka",
-      "--file-filter", "Все файлы | *"]
+      "--title", "Upload to library",
+      "--file-filter", "Audio | *.mp3 *.flac *.wav *.ogg *.mka",
+      "--file-filter", "All files | *"]
     pickProc.running = true
   }
 
@@ -193,7 +177,7 @@ BarWidget {
     uploadOk = 0
     uploadFail = 0
     uploadBusy = true
-    uploadStatus = "заливаю (1/" + paths.length + ")…"
+    uploadStatus = "uploading (1/" + paths.length + ")…"
     uploadNext()
   }
 
@@ -207,7 +191,7 @@ BarWidget {
       uploadBusy = false
       loadLibrary()
       uploadStatus = uploadFail === 0
-        ? "готово: " + uploadOk + " тр." + (uploadOk > 1 ? "ов" : "")
+        ? "done: " + uploadOk + " track" + (uploadOk > 1 ? "s" : "")
         : uploadOk + " ок, " + uploadFail + " с ошибкой"
       if (reopenAfterUpload) {
         reopenAfterUpload = false
@@ -215,7 +199,7 @@ BarWidget {
       }
       return
     }
-    uploadStatus = "заливаю (" + (uploadOk + uploadFail + 1) + "/" + (uploadOk + uploadFail + uploadQueue.length) + ")…"
+    uploadStatus = "uploading (" + (uploadOk + uploadFail + 1) + "/" + (uploadOk + uploadFail + uploadQueue.length) + ")…"
     uploadProc.command = ["curl", "-sS", "-F", "file=@" + uploadQueue[0], server + "/audio/upload"]
     uploadQueue = uploadQueue.slice(1)
     uploadProc.running = true
@@ -223,20 +207,20 @@ BarWidget {
 
   function uploadFinished(text) {
     let ok = false
-    let msg = "сервер не ответил"
+    let msg = "server did not respond"
     try {
       const r = JSON.parse(String(text))
       if (r && (r.success || r.existed)) { ok = true; uploadOk++ }
-      else msg = r.error || "сервер отказал"
+      else msg = r.error || "server refused"
     } catch (e) {
-      msg = "не разобрал ответ сервера: " + String(text).slice(0, 60)
+      msg = "bad server response: " + String(text).slice(0, 60)
     }
     if (!ok) { uploadFail++; editStatus = msg; editError = true }
     uploadNext()
   }
 
   function patchTrack(id, payload) {
-    editStatus = "сохраняю…"
+    editStatus = "saving…"
     editError = false
     const xhr = new XMLHttpRequest()
     xhr.open("PATCH", root.server + "/tracks/" + id)
@@ -249,8 +233,8 @@ BarWidget {
         loadLibrary()
       } else {
         editError = true
-        try { editStatus = JSON.parse(xhr.responseText).error || ("ошибка " + xhr.status) }
-        catch (e) { editStatus = "ошибка " + xhr.status }
+        try { editStatus = JSON.parse(xhr.responseText).error || ("error " + xhr.status) }
+        catch (e) { editStatus = "error " + xhr.status }
       }
     }
     xhr.send(JSON.stringify(payload))
@@ -273,12 +257,12 @@ BarWidget {
     if (!confirmDelete) {
       confirmDelete = true
       editError = true
-      editStatus = "трек и файлы сотрутся безвозвратно — нажми ещё раз для подтверждения"
+      editStatus = "track and files will be deleted for good — press again to confirm"
       return
     }
     confirmDelete = false
     editError = false
-    editStatus = "удаляю…"
+    editStatus = "deleting…"
     const xhr = new XMLHttpRequest()
     xhr.open("DELETE", root.server + "/tracks/" + t.id)
     xhr.onreadystatechange = function() {
@@ -289,8 +273,8 @@ BarWidget {
         loadLibrary()
       } else {
         editError = true
-        try { editStatus = JSON.parse(xhr.responseText).error || ("ошибка " + xhr.status) }
-        catch (e) { editStatus = "ошибка " + xhr.status }
+        try { editStatus = JSON.parse(xhr.responseText).error || ("error " + xhr.status) }
+        catch (e) { editStatus = "error " + xhr.status }
       }
     }
     xhr.send()
@@ -356,7 +340,7 @@ BarWidget {
     parser: SplitParser {
       splitMarker: "\n"
       onRead: function(data) {
-        if (!root.popupOpen || root.sortIndex !== 3 || root.sortMenuOpen) return
+        if (!root.popupOpen || root.sortIndex !== 2 || root.sortMenuOpen) return
         try {
           const ev = JSON.parse(String(data))
           if (ev && ev.event === "played") root.loadLibrary()
@@ -378,7 +362,7 @@ BarWidget {
     id: recentPollTimer
     interval: 15000
     repeat: true
-    running: root.popupOpen && root.isOurPlayer && root.sortIndex === 3 && !root.sortMenuOpen
+    running: root.popupOpen && root.isOurPlayer && root.sortIndex === 2 && !root.sortMenuOpen
     onTriggered: root.loadLibrary()
   }
   // Реконнект push-сокета: сервер мог рестартнуться — пробуем снова.
@@ -586,7 +570,7 @@ BarWidget {
               : String.fromCodePoint(0xF0456) // nf-md-repeat
           foreground: root.activePlayer && root.activePlayer.loopState !== MprisLoopState.None
             ? Commons.Color.accent : Qt.darker(root.bar.foreground, 1.6)
-          tooltipText: "повтор: выкл / весь плейлист / один трек"
+          tooltipText: "repeat: off / playlist / one track"
           iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
           verticalPadding: Style.spacing.controlPaddingY
@@ -638,7 +622,7 @@ BarWidget {
         // закрывает попап (grab держал бы диалог под виджетом).
         Button {
           iconText: "󰐕"
-          tooltipText: "залить треки в библиотеку"
+          tooltipText: "upload tracks to library"
           foreground: root.bar.foreground
           iconSize: Style.font.iconLarge
           horizontalPadding: Style.spacing.controlPaddingX
@@ -796,7 +780,7 @@ BarWidget {
           width: Math.max(Style.space(120),
             parent.width - sortCycle.implicitWidth - orderBtn.implicitWidth - Style.space(12))
           height: parent.height
-          placeholderText: "поиск: название / исполнитель / альбом"
+          placeholderText: "search: title / artist / album"
           foreground: root.bar.foreground
           font.family: root.bar.fontFamily
         }
@@ -804,7 +788,7 @@ BarWidget {
         Button {
           id: sortCycle
           height: parent.height
-          text: root.sortShortLabels[sortIndex]
+          text: root.sortLabel
           foreground: root.sortMenuOpen ? Commons.Color.accent : root.bar.foreground
           onClicked: root.sortMenuOpen = !root.sortMenuOpen
         }
@@ -850,7 +834,9 @@ BarWidget {
         visible: root.isOurPlayer && root.playlist.length > 0 && root.editingTrack === null
           && !root.sortMenuOpen
         width: parent.width
-        height: Math.min(trackColumn.implicitHeight, Style.space(300))
+        // Потолок списка задаёт высоту окна: 240 вместо 300 — компактней,
+        // с четырьмя строками-шапками всё ещё виден хороший кусок плейлиста.
+        height: Math.min(trackColumn.implicitHeight, Style.space(240))
         contentHeight: trackColumn.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
@@ -873,7 +859,7 @@ BarWidget {
               // В режиме «недавно прослушанные» к строке добавляется штамп:
               // сервер хранит время в UTC-ISO, Date его читает как UTC —
               // и форматирует уже в местном времени, без секунд.
-              readonly property string lastPlayedLabel: root.sortIndex === 3
+              readonly property string lastPlayedLabel: root.sortIndex === 2
                 && modelData.lastPlayed
                 ? Qt.formatDateTime(new Date(modelData.lastPlayed), "dd.MM.yy HH:mm")
                 : ""
@@ -1002,8 +988,8 @@ BarWidget {
         visible: root.isOurPlayer && root.library.length > 0 && root.playlist.length === 0 && root.editingTrack === null
         width: parent.width
         textFormat: Text.PlainText
-        text: root.sortIndex === 3 && filterField.text.trim() === ""
-          ? "пока ничего не прослушано" : "ничего не найдено"
+        text: root.sortIndex === 2 && filterField.text.trim() === ""
+          ? "nothing played yet" : "nothing found"
         color: Qt.darker(root.bar.foreground, 1.6)
         font.family: root.bar.fontFamily
         font.pixelSize: Style.font.caption
@@ -1023,7 +1009,7 @@ BarWidget {
 
           Button {
             height: Style.space(26)
-            text: "←  к списку"
+            text: "←  back to list"
             foreground: root.bar.foreground
             onClicked: {
               editingTrack = null
@@ -1038,7 +1024,7 @@ BarWidget {
           id: editTitle
           width: parent.width
           height: Style.space(28)
-          placeholderText: "название"
+          placeholderText: "title"
           foreground: root.bar.foreground
           font.family: root.bar.fontFamily
           text: root.editingTrack ? (root.editingTrack.title || "") : ""
@@ -1048,7 +1034,7 @@ BarWidget {
           id: editArtist
           width: parent.width
           height: Style.space(28)
-          placeholderText: "исполнитель (пусто = убрать)"
+          placeholderText: "artist (empty = clear)"
           foreground: root.bar.foreground
           font.family: root.bar.fontFamily
           text: root.editingTrack ? (root.editingTrack.artist || "") : ""
@@ -1058,7 +1044,7 @@ BarWidget {
           id: editAlbum
           width: parent.width
           height: Style.space(28)
-          placeholderText: "альбом (пусто = убрать)"
+          placeholderText: "album (empty = clear)"
           foreground: root.bar.foreground
           font.family: root.bar.fontFamily
           text: root.editingTrack ? (root.editingTrack.album || "") : ""
@@ -1068,7 +1054,7 @@ BarWidget {
           id: editGenre
           width: parent.width
           height: Style.space(28)
-          placeholderText: "жанр (пусто = убрать)"
+          placeholderText: "genre (empty = clear)"
           foreground: root.bar.foreground
           font.family: root.bar.fontFamily
           text: root.editingTrack ? (root.editingTrack.genre || "") : ""
@@ -1080,14 +1066,14 @@ BarWidget {
 
           Button {
             height: Style.space(28)
-            text: "сохранить"
+            text: "save"
             foreground: root.bar.foreground
             onClicked: root.saveEdit()
           }
 
           Button {
             height: Style.space(28)
-            text: root.confirmDelete ? "точно удалить?" : "удалить"
+            text: root.confirmDelete ? "really delete?" : "delete"
             foreground: root.confirmDelete ? Commons.Color.accent : root.bar.foreground
             onClicked: root.deleteTrack()
           }
