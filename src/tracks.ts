@@ -52,8 +52,29 @@ export function trackToJson(row: TrackRow): Record<string, unknown> {
     discNo: row.disc_no,
     discTotal: row.disc_total,
     metaSource: row.meta_source,
+    lastPlayed: isoTimestamp(row.last_played_at),
+    playCount: row.play_count,
     createdAt: isoTimestamp(row.created_at),
   };
+}
+
+/**
+ * Факт прослушивания: мост диалог только после 30 сек реального звучания,
+ * здесь только штамп. Счётчик — сколько раз трек переходил порог.
+ * Кто прослушал — решает клиент; сервер не считает ключевую позицию сам,
+ * ему не суждено знать, слушал ли человек вообще.
+ */
+export async function markTrackPlayed(
+  db: Knex,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  const now = new Date().toISOString().slice(0, 19).replace("T", " ");
+  const count = await db("tracks").where("id", id).update({
+    last_played_at: now,
+    play_count: db.raw("play_count + 1"),
+  });
+  if (count === 0) return null;
+  return trackToJson(await db("tracks").where("id", id).first());
 }
 
 /** sqlite "2026-01-17 13:33:42" → ISO "2026-01-17T13:33:42Z"; Date → ISO. */
@@ -75,6 +96,7 @@ const SORTABLE: Record<string, { column: string; nullable: boolean }> = {
   album: { column: "album", nullable: true },
   year: { column: "year", nullable: true },
   duration: { column: "duration_sec", nullable: true },
+  played: { column: "last_played_at", nullable: true },
 };
 
 export const DEFAULT_LIMIT = 50;

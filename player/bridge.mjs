@@ -87,6 +87,7 @@ const state = {
   durationSec: null,
   volume: 100,    // mpv-шкала 0..100; в MPRIS отдаётся 0..1
   loop: "Playlist", // None | Track | Playlist; очередь крутится у нас самих
+  listenedSec: 0, // непрерывное звучание текущего трека, тикает только при play
 };
 
 /** interface используется в обработчиках событий раньше своего создания. */
@@ -230,10 +231,40 @@ function setPaused(pause) {
   setPlaying(!pause && state.loaded);
 }
 
+/**
+ * Учёт прослушивания. Тик раз в секунду наращивает счётчик только пока
+ * mpv реально играет (state.playing — «файл загружен и pause=false»):
+ * пауза и простой не пачкают историю.
+ */
+setInterval(() => {
+  if (state.loaded && state.playing) state.listenedSec++;
+}, 1000);
+
+/** Порог признания: 30 секунд реального звучания; проматывания и клики
+ * по списку историю не портят. Сервер только штампует время и растит
+ * счётчик — сортировка «по последнему прослушанному» живёт на нём. */
+function markPlayed() {
+  const item = state.tracks[state.index];
+  const sec = state.listenedSec;
+  state.listenedSec = 0; // счёт пер-трековый: даже сбой пинга копит заново
+  if (!item || sec < 30) return Promise.resolve();
+  return fetch(`${SERVER}/tracks/${item.id}/play`, {
+    method: "POST",
+    signal: AbortSignal.timeout(1500),
+  })
+    .then((res) => {
+      if (!res.ok) console.warn(`* play-ping: сервер ответил ${res.status}`);
+    })
+    .catch(() => {
+      // Сервер перезапускался или недоступен — штамп пропустим, музыка не в счёт.
+    });
+}
+
 /** Переходы и статус меняются только вместе с рассылкой(PropertiesChanged). */
 async function transition(index, pause) {
   const item = state.tracks[index];
   if (!item) return;
+  void markPlayed(); // признаём прослушанным то, что только что играло
   state.index = index;
   state.loaded = true;
   rebuildMetadata();
@@ -376,6 +407,9 @@ mpv.onEvent(function onEventMsg(msg) {
       state.loaded = false;
       state.playing = false;
       state.durationSec = null;
+      // idle бывает и после простоя, и после честного конца очереди (None):
+      // счётчик либо общий ноль, либо недоигранный хвост — оба признаёт markPlayed.
+      void markPlayed();
       changes({ PlaybackStatus: playbackStatus() });
       break;
   }
@@ -464,6 +498,7 @@ class PlayerInterface extends Interface {
   }
 
   Stop() {
+    void markPlayed(); // остановка после дослушанных 30с — тоже факт
     state.loaded = false;
     state.positionSec = 0;
     setPlaying(false);
@@ -640,6 +675,7 @@ void superviseMpv();
 function shutdown() {
   void (async () => {
     console.log("* закрываюсь");
+    await markPlayed(); // дослушанный до выхода трек тоже штампуем
     persistState();
     try {
       await bus.close();

@@ -15,7 +15,7 @@ import {
 import { readTags, toColumns, type TrackTags } from "./audio/tags";
 import { extractCover, coverMime } from "./audio/cover";
 import { resolveTags, type MetaSource } from "./audio/filename-tags";
-import { listTracks, patchToColumns, trackToJson, type PatchBody } from "./tracks";
+import { listTracks, markTrackPlayed, patchToColumns, trackToJson, type PatchBody } from "./tracks";
 
 /**
  * Каталоги вычисляются на вызов: тесты задают MUSICLIB_STORAGE в
@@ -433,6 +433,11 @@ export function buildApp(db: Knex) {
       const row = await db("tracks").where("id", params.id).first();
       if (!row) return errorResponse(404, "трек не найден");
       return trackToJson(row);
+    })
+    .post("/tracks/:id/play", async ({ params }) => {
+      const updated = await markTrackPlayed(db, params.id);
+      if (!updated) return errorResponse(404, "трек не найден");
+      return updated;
     })
     .patch(
       "/tracks/:id",

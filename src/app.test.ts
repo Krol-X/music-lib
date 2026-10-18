@@ -520,3 +520,78 @@ describe("DELETE /tracks/:id", () => {
     expect(ids(body)).toEqual(["track-3", "track-1", "track-4"]);
   });
 });
+
+async function playJson(id: string): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await app.handle(new Request(`http://localhost/tracks/${id}/play`, { method: "POST" }));
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+describe("POST /tracks/:id/play", () => {
+  test("никогда не игравший трек: штамп и счётчик с нуля", async () => {
+    const before = await getJson("/tracks/track-1");
+    expect(before.body.lastPlayed).toBeNull();
+    expect(before.body.playCount).toBe(0);
+
+    const r1 = await playJson("track-1");
+    expect(r1.status).toBe(200);
+    expect(typeof r1.body.lastPlayed).toBe("string");
+    expect(r1.body.playCount).toBe(1);
+
+    // Повторное признание того же трека только наращивает счётчик.
+    const r2 = await playJson("track-1");
+    expect(r2.body.playCount).toBe(2);
+  });
+
+  test("несуществующий трек: 404 в едином формате", async () => {
+    const { status, body } = await playJson("нет-такого");
+    expect(status).toBe(404);
+    expect(body.error).toBe("трек не найден");
+  });
+});
+
+describe("GET /tracks?sort=played", () => {
+  // Свои треки и штампы: к этому моменту DELETE-тесты уже удалили пару
+  // фикстур, а API-пинг ставит время от часов запуска — порядок обязан
+  // быть детерминированным, поэтому всё с нуля и по рукам.
+  const p1 = "sort-played-a";
+  const p2 = "sort-played-b";
+  const p3 = "sort-played-c";
+
+  beforeAll(async () => {
+    for (const [id, stamp] of [
+      [p1, "2026-01-05 10:00:00"],
+      [p2, "2026-01-04 10:00:00"],
+      [p3, "2026-01-03 10:00:00"],
+    ] as const) {
+      await db("tracks").insert({
+        id,
+        filename: `${id}.mp3`,
+        ext: "mp3",
+        size_bytes: 100,
+        opus_path: `${id}.opus`,
+        title: id,
+        meta_source: "none",
+        created_at: "2024-02-01 10:00:00",
+        last_played_at: stamp,
+      });
+    }
+    // Реальные треки, что дожили до этих тестов, сбрасываем в «никогда»:
+    // их штампы могли появиться из POST-тестов, зависящих от часов.
+    await db("tracks").whereNotIn("id", [p1, p2, p3]).update({ last_played_at: null });
+  });
+
+  afterAll(async () => {
+    await db("tracks").whereIn("id", [p1, p2, p3]).del();
+  });
+
+  test("desc: недавно прослушанные первыми, никогда — в конце", async () => {
+    const { status, body } = await getJson("/tracks?sort=played&order=desc");
+    expect(status).toBe(200);
+    expect(ids(body)).toEqual([p1, p2, p3, "track-1", "track-3", "track-4"]);
+  });
+
+  test("asc: от давнего к недавнему, никогда по-прежнему в конце", async () => {
+    const { body } = await getJson("/tracks?sort=played&order=asc");
+    expect(ids(body)).toEqual([p3, p2, p1, "track-1", "track-3", "track-4"]);
+  });
+});

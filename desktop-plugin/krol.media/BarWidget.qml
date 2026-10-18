@@ -41,12 +41,18 @@ BarWidget {
   // уже в секундах). Ноль — перемотка не показываем вовсе.
   readonly property real trackLength: activePlayer ? (activePlayer.length ?? 0) : 0
 
-  property int sortIndex: 0 // 0 альбом, 1 трек, 2 исполнитель — как у сервера
-  readonly property var sortLabels: ["альбом", "название", "исполнитель"]
+  // Сортировка плейлиста — локальная, по уже скачанному списку. Пять
+  // режимов и направление; дефолты честные: «недавно» и «новые» смотрим
+  // сверху вниз по времени (desc), текстовые поля — по алфавиту (asc).
+  property int sortIndex: 0 // 0 альбом, 1 название, 2 исполнитель, 3 недавно, 4 новые
+  readonly property var sortLabels: ["альбом", "название", "исполнитель", "недавно", "новые"]
   readonly property string sortLabel: sortLabels[sortIndex]
+  property bool orderDesc: false
+  readonly property var sortDefaultDesc: [false, false, false, true, true]
 
   function cycleSort() {
-    sortIndex = (sortIndex + 1) % 3
+    sortIndex = (sortIndex + 1) % sortLabels.length
+    orderDesc = sortDefaultDesc[sortIndex]
   }
 
   function mmss(sec) {
@@ -55,9 +61,11 @@ BarWidget {
   }
 
   // Плейлист, каким его видит попап: фильтр по подстроке (название,
-  // исполнитель, альбом) плюс сортировка в режиме из серверного/?sort=…
-  // Режим «album» — тот порядок, в котором список уже пришёл, поэтому
-  // он же порядок очереди моста и next продолжает по списку.
+  // исполнитель, альбом) плюс сортировка в выбранном режиме и направлении.
+  // Порядок очереди моста от этого независим — он всегда album/asc с
+  // сервера; здесь только взгляд глазами. Направление — переворот
+  // компаратора, кроме «недавно»: никогда не игравшие в конце при любом
+  // направлении, свежие сверху по умолчанию.
   readonly property var playlist: {
     const q = filterField.text.trim().toLowerCase()
     let items = root.library
@@ -69,14 +77,37 @@ BarWidget {
       })
     }
     items = items.slice()
-    if (root.sortIndex === 1) {
-      items.sort(function(a, b) { return String(a.title || "").localeCompare(String(b.title || "")) })
+    const num = function(x) { return x === null || x === undefined ? 0 : Number(x) }
+    const flip = function(c) { return root.orderDesc ? -c : c }
+    if (root.sortIndex === 0) {
+      items.sort(function(a, b) {
+        return flip(String(a.album || "").localeCompare(String(b.album || ""))
+          || num(a.year) - num(b.year)
+          || num(a.discNo) - num(b.discNo)
+          || num(a.trackNo) - num(b.trackNo))
+      })
+    } else if (root.sortIndex === 1) {
+      items.sort(function(a, b) {
+        return flip(String(a.title || "").localeCompare(String(b.title || "")))
+      })
     } else if (root.sortIndex === 2) {
       items.sort(function(a, b) {
-        return String(a.artist || "").localeCompare(String(b.artist || ""))
+        return flip(String(a.artist || "").localeCompare(String(b.artist || ""))
           || String(a.album || "").localeCompare(String(b.album || ""))
-          || String(a.discNo || "").localeCompare(String(b.discNo || ""))
-          || String(a.trackNo || "").localeCompare(String(b.trackNo || ""))
+          || num(a.discNo) - num(b.discNo)
+          || num(a.trackNo) - num(b.trackNo))
+      })
+    } else if (root.sortIndex === 3) {
+      items.sort(function(a, b) {
+        // Никогда не игравшие (lastPlayed null) всегда после игравших.
+        const aNull = !a.lastPlayed
+        const bNull = !b.lastPlayed
+        if (aNull || bNull) return aNull === bNull ? 0 : (aNull ? 1 : -1)
+        return flip(String(a.lastPlayed).localeCompare(String(b.lastPlayed)))
+      })
+    } else {
+      items.sort(function(a, b) {
+        return flip(String(a.createdAt || "").localeCompare(String(b.createdAt || "")))
       })
     }
     return items
@@ -704,7 +735,7 @@ BarWidget {
 
         TextField {
           id: filterField
-          width: parent.width - sortCycle.implicitWidth - Style.space(6)
+          width: parent.width - sortCycle.implicitWidth - orderBtn.implicitWidth - Style.space(12)
           height: parent.height
           placeholderText: "поиск: название / исполнитель / альбом"
           foreground: root.bar.foreground
@@ -717,6 +748,16 @@ BarWidget {
           text: root.sortLabel
           foreground: root.bar.foreground
           onClicked: root.cycleSort()
+        }
+
+        // Направление текущего режима: ↑ алфавит/старые, ↓ обратно.
+        // Свой дефолт на режим ставит cycleSort, тут только доигрывается.
+        Button {
+          id: orderBtn
+          height: parent.height
+          iconText: root.orderDesc ? "↓" : "↑"
+          foreground: root.orderDesc ? Commons.Color.accent : root.bar.foreground
+          onClicked: root.orderDesc = !root.orderDesc
         }
       }
 
