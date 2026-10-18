@@ -789,7 +789,7 @@ BarWidget {
           width: Math.max(Style.space(120),
             parent.width - sortCycle.implicitWidth - orderBtn.implicitWidth - Style.space(12))
           height: parent.height
-          placeholderText: "search: title / artist / album"
+          placeholderText: "search…"
           foreground: root.bar.foreground
           font.family: root.bar.fontFamily
         }
