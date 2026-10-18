@@ -999,6 +999,7 @@ BarWidget {
 
           Rectangle {
             width: parent.width * root.uploadFrac
+            height: parent.height
             radius: Style.space(2)
             color: root.uploadBusy ? Commons.Color.accent : root.bar.foreground
             opacity: root.uploadBusy ? 1.0 : 0.5
@@ -1092,6 +1093,7 @@ BarWidget {
       // следующем открытии.
       Row {
         visible: root.isOurPlayer && root.library.length > 0 && root.editingTrack === null
+          && !root.uploadPanelOpen
         height: Style.space(30)
         width: parent.width
         spacing: Style.space(6)

@@ -74,7 +74,10 @@ def main() -> int:
         body.close()
         conn.send(post)
         sent += len(post)
-        report()
+        # Финальные 100% — всегда, независимо от порога шага: без них строка
+        # застревает на 99% на всю фазу конвертации.
+        if sent >= total:
+            print("p:100%", flush=True)
 
         resp = conn.getresponse()
         print(resp.read().decode("utf-8", "replace"), flush=True)
