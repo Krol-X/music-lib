@@ -42,10 +42,12 @@ BarWidget {
   readonly property real trackLength: activePlayer ? (activePlayer.length ?? 0) : 0
 
   // Сортировка плейлиста — локальная, по уже скачанному списку. Пять
-  // режимов и направление; дефолты честные: «недавно» и «новые» смотрим
-  // сверху вниз по времени (desc), текстовые поля — по алфавиту (asc).
-  property int sortIndex: 0 // 0 альбом, 1 название, 2 исполнитель, 3 недавно, 4 новые
-  readonly property var sortLabels: ["альбом", "название", "исполнитель", "недавно", "новые"]
+  // режимов и направление; дефолты честные: «недавно прослушанные» и
+  // «новые» смотрим сверху вниз по времени (desc), текстовые поля — по
+  // алфавиту (asc). По умолчанию альбом: стартовый вид совпадает с
+  // порядком очереди моста.
+  property int sortIndex: 1 // 0 название, 1 альбом, 2 исполнитель, 3 недавно, 4 новые
+  readonly property var sortLabels: ["название", "альбом", "исполнитель", "недавно прослушанные", "новые"]
   readonly property string sortLabel: sortLabels[sortIndex]
   property bool orderDesc: false
   readonly property var sortDefaultDesc: [false, false, false, true, true]
@@ -84,14 +86,14 @@ BarWidget {
     const flip = function(c) { return root.orderDesc ? -c : c }
     if (root.sortIndex === 0) {
       items.sort(function(a, b) {
+        return flip(String(a.title || "").localeCompare(String(b.title || "")))
+      })
+    } else if (root.sortIndex === 1) {
+      items.sort(function(a, b) {
         return flip(String(a.album || "").localeCompare(String(b.album || ""))
           || num(a.year) - num(b.year)
           || num(a.discNo) - num(b.discNo)
           || num(a.trackNo) - num(b.trackNo))
-      })
-    } else if (root.sortIndex === 1) {
-      items.sort(function(a, b) {
-        return flip(String(a.title || "").localeCompare(String(b.title || "")))
       })
     } else if (root.sortIndex === 2) {
       items.sort(function(a, b) {
