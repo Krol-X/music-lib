@@ -59,6 +59,7 @@ BarWidget {
     sortIndex = i
     orderDesc = sortDefaultDesc[i]
     sortMenuOpen = false
+    uploadPanelOpen = false
   }
 
   function mmss(sec) {
@@ -144,13 +145,25 @@ BarWidget {
   property bool editError: false
 
   property bool uploadBusy: false
-  property var uploadQueue: []
+  // Очередь: {path, name, state: pending|uploading|ok|fail, pct}.
+  // Проценты ТЕКУЩЕГО файла берутся из uploadPct — не перегенерируем
+  // массив на каждый тик, Repeater перечитывает биндинг сам.
+  property var uploadItems: []
   property int uploadOk: 0
   property int uploadFail: 0
+  property real uploadPct: 0
   property string uploadStatus: ""
-  // Попап временно закрывается перед файловым диалогом (grab держит фокус
-  // у виджета, диалог уходит под него); вернуть после заливки.
-  property bool reopenAfterUpload: false
+  // Панель прогресса на месте списка треков; открывается на время заливки.
+  property bool uploadPanelOpen: false
+  property bool uploadCancelled: false
+  property string uploadResponse: ""
+  // Путь к uploader.py рядом с этим файлом QML.
+  readonly property string uploaderPath: localPath(Qt.resolvedUrl("uploader.py"))
+
+  function localPath(url) {
+    const s = url.toString()
+    return s.startsWith("file://") ? s.slice("file://".length) : s
+  }
 
   Process {
     id: pickProc
@@ -159,8 +172,8 @@ BarWidget {
 
   function uploadPick() {
     // Диалог против grab'а попапа: пока попап держит клавиатуру, zenity
-    // уходит под виджет. Закрываю себя, запоминаю, вернуть после заливки.
-    reopenAfterUpload = popupOpen
+    // уходит под виджет. Закрываю себя; после выбора файлов открываю
+    // обратно сразу — панель прогресса теперь сама по себе живёт тут.
     if (popupOpen) popupOpen = false
     pickProc.command = ["zenity", "--file-selection", "--multiple",
       "--title", "Upload to library",
@@ -172,54 +185,99 @@ BarWidget {
   function uploadPicked(text) {
     const paths = String(text).trim().split("\n").filter(Boolean)
     if (paths.length === 0) {
-      // Отмена диалога: вернуть виджет как было.
-      if (reopenAfterUpload) { reopenAfterUpload = false; popupOpen = true }
+      // Отмена диалога: вернуть попап.
+      popupOpen = true
       return
     }
-    uploadQueue = paths
     uploadOk = 0
     uploadFail = 0
+    uploadPct = 0
+    uploadCancelled = false
+    uploadResponse = ""
     uploadBusy = true
-    uploadStatus = "uploading (1/" + paths.length + ")…"
+    uploadItems = paths.map(function(p) {
+      const base = p.slice(p.lastIndexOf("/") + 1)
+      return { path: p, name: base === "" ? p : base, state: "pending", pct: 0 }
+    })
+    uploadPanelOpen = true
+    // Попап возвращаем сразу — панель прогресса живёт там.
+    popupOpen = true
     uploadNext()
   }
 
   Process {
     id: uploadProc
-    stdout: StdioCollector { onStreamFinished: root.uploadFinished(text) }
+    stdout: SplitParser {
+      splitMarker: "\n"
+      onRead: function(data) {
+        const line = String(data).trim()
+        if (line.startsWith("{")) {
+          root.uploadResponse = line
+          return
+        }
+        const m = line.match(/^p:(\d+)%$/)
+        if (m) root.uploadPct = Number(m[1])
+      }
+    }
+    onRunningChanged: if (!running) root.uploadDone()
+  }
+
+  function markItem(i, state) {
+    const items = uploadItems.slice()
+    items[i] = Object.assign({}, items[i], { state: state })
+    uploadItems = items
   }
 
   function uploadNext() {
-    if (uploadQueue.length === 0) {
+    let idx = -1
+    for (let i = 0; i < uploadItems.length; i++) {
+      if (uploadItems[i].state === "pending") { idx = i; break }
+    }
+    if (idx === -1) {
       uploadBusy = false
+      uploadPanelOpen = false
       loadLibrary()
       uploadStatus = uploadFail === 0
         ? "done: " + uploadOk + " track" + (uploadOk > 1 ? "s" : "")
-        : uploadOk + " ок, " + uploadFail + " с ошибкой"
-      if (reopenAfterUpload) {
-        reopenAfterUpload = false
-        popupOpen = true
-      }
+        : uploadOk + " ok, " + uploadFail + " failed"
       return
     }
-    uploadStatus = "uploading (" + (uploadOk + uploadFail + 1) + "/" + (uploadOk + uploadFail + uploadQueue.length) + ")…"
-    uploadProc.command = ["curl", "-sS", "-F", "file=@" + uploadQueue[0], server + "/audio/upload"]
-    uploadQueue = uploadQueue.slice(1)
+    markItem(idx, "uploading")
+    uploadPct = 0
+    uploadResponse = ""
+    uploadStatus = "uploading (" + (uploadOk + uploadFail + 1) + "/" + uploadItems.length + ")…"
+    uploadProc.command = ["python3", root.uploaderPath, uploadItems[idx].path, root.server]
     uploadProc.running = true
   }
 
-  function uploadFinished(text) {
+  function uploadDone() {
+    if (uploadCancelled) return
+    const idx = uploadItems.findIndex(function(it) { return it.state === "uploading" })
     let ok = false
     let msg = "server did not respond"
     try {
-      const r = JSON.parse(String(text))
+      const r = JSON.parse(root.uploadResponse)
       if (r && (r.success || r.existed)) { ok = true; uploadOk++ }
       else msg = r.error || "server refused"
     } catch (e) {
-      msg = "bad server response: " + String(text).slice(0, 60)
+      msg = "bad server response: " + String(root.uploadResponse).slice(0, 60)
     }
+    if (idx >= 0) markItem(idx, ok ? "ok" : "fail")
     if (!ok) { uploadFail++; editStatus = msg; editError = true }
     uploadNext()
+  }
+
+  function uploadCancel() {
+    if (!uploadBusy) return
+    uploadCancelled = true
+    uploadProc.running = false
+    const uploading = uploadItems.filter(function(it) { return it.state === "uploading" }).length
+    const pending = uploadItems.filter(function(it) { return it.state === "pending" }).length
+    uploadBusy = false
+    uploadPanelOpen = false
+    uploadPct = 0
+    uploadStatus = uploadOk + " ok, " + uploadFail + " failed"
+      + (uploading + pending > 0 ? ", " + (uploading + pending) + " cancelled" : "")
   }
 
   function patchTrack(id, payload) {
@@ -583,6 +641,22 @@ BarWidget {
         LayoutMirroring.enabled: false
         LayoutMirroring.childrenInherit: true
 
+        // Прогресс заливки (видна только пока заливаем): сводный процент
+        // всей очереди. Клик сворачивает/разворачивает панель файлов.
+        Button {
+          visible: root.uploadBusy
+          text: Math.floor(((root.uploadOk + root.uploadFail) +
+            (root.uploadPct / 100)) / Math.max(1, root.uploadItems.length) * 100) + "%"
+          foreground: Commons.Color.accent
+          fontSize: Style.font.caption
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY
+          onClicked: {
+            root.sortMenuOpen = false
+            root.uploadPanelOpen = !root.uploadPanelOpen
+          }
+        }
+
         // Повтор: None → Playlist → Track → None, пишем в loopState моста.
         // Внимание: loopState в Quickshell — числовой enum MprisLoopState
         // (None=0, Track=1, Playlist=2), а не строка MPRIS "None"/"Track"/...
@@ -878,10 +952,86 @@ BarWidget {
         }
       }
 
+      // ── панель заливки: пофайловый прогресс на месте списка треков ────────
+      Column {
+        id: uploadPanelCol
+        readonly property real upDownWidth: Style.space(40)
+        visible: root.isOurPlayer && root.uploadBusy && root.uploadPanelOpen
+          && root.editingTrack === null
+        width: parent.width
+        spacing: Style.space(4)
+
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
+
+          Text {
+            textFormat: Text.PlainText
+            text: root.uploadStatus
+            color: Qt.darker(root.bar.foreground, 1.4)
+            font.family: root.bar.fontFamily
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+            width: parent.width - cancelBtn.implicitWidth - Style.space(6)
+          }
+
+          Button {
+            id: cancelBtn
+            height: Style.space(26)
+            text: "cancel"
+            foreground: root.bar.foreground
+            onClicked: root.uploadCancel()
+          }
+        }
+
+        Repeater {
+          model: root.uploadItems
+          Row {
+            required property var modelData
+            required property int index
+            width: uploadPanelCol.width
+            spacing: Style.space(6)
+            height: Style.space(26)
+
+            Text {
+              textFormat: Text.PlainText
+              text: modelData.state === "uploading" ? "→  " + modelData.name
+                : modelData.state === "pending" ? "·  " + modelData.name
+                : modelData.state === "ok" ? "✓  " + modelData.name
+                : "✕  " + modelData.name
+              color: modelData.state === "uploading" ? root.bar.foreground
+                : modelData.state === "ok" ? Qt.darker(root.bar.foreground, 1.6)
+                : modelData.state === "fail" ? Commons.Color.accent
+                : Qt.darker(root.bar.foreground, 1.3)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
+              width: parent.width - uploadPanelCol.upDownWidth - Style.space(6)
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              readonly property real pct: modelData.state === "uploading" ? root.uploadPct
+                : modelData.state === "ok" ? 100
+                : modelData.state === "fail" ? 0
+                : modelData.state === "pending" ? 0 : 0
+              text: modelData.state === "uploading" ? pct + "%"
+                : modelData.state === "ok" ? "✓"
+                : modelData.state === "fail" ? "✕" : "—"
+              color: modelData.state === "fail" ? Commons.Color.accent
+                : Qt.darker(root.bar.foreground, 1.4)
+              font.family: root.bar.fontFamily
+              font.pixelSize: Style.font.caption
+              horizontalAlignment: Text.AlignRight
+            }
+          }
+        }
+      }
+
       Flickable {
         id: trackFlick
         visible: root.isOurPlayer && root.playlist.length > 0 && root.editingTrack === null
-          && !root.sortMenuOpen
+          && !root.sortMenuOpen && !root.uploadPanelOpen
         width: parent.width
         // Потолок списка задаёт высоту окна: 196 px ≈ 5 строк (38px + 1px
         // spacer каждая), окно компактнее на высоту одной строки.
@@ -1034,7 +1184,7 @@ BarWidget {
       }
 
       Text {
-        visible: root.isOurPlayer && root.library.length > 0 && root.playlist.length === 0 && root.editingTrack === null
+        visible: !root.uploadPanelOpen && root.isOurPlayer && root.library.length > 0 && root.playlist.length === 0 && root.editingTrack === null
         width: parent.width
         textFormat: Text.PlainText
         text: root.sortIndex === 2 && filterField.text.trim() === ""
