@@ -47,10 +47,44 @@ const MAX_TEXT = 1000;
  */
 const JOIN = ", ";
 
+/**
+ * Починка кириллицы из тегов без UTF-8. ID3v2 с encoding=0 (обещан
+ * ISO-8859-1) и ID3v1 в реальности почти всегда писались в windows-1251:
+ * парсер честно верит заголовку, и «Ругань Из-За Стены» приезжает как
+ * «Ðóãàíü Èç-Çà Ñòåíû».
+ *
+ * Чиним только если строка в этом и нуждается: единичные «декоративные»
+ * латинские буквы из этого диапазона (Björk, Motörhead) не должны
+ * превращаться в кириллицу. Порог 60% «наших» букв после перекодировки —
+ * mojibake от русского текста даёт под 100%, а у родного латинского
+ * заголовка руки до 1-2 знаков, то есть сильно меньше порога.
+ */
+export function repairCyrillic(s: string): string {
+  if (!/[\xC0-\xFF]/.test(s)) return s;
+  let bytes: Uint8Array;
+  try {
+    bytes = Uint8Array.from([...s], (ch) => {
+      const code = ch.codePointAt(0)!;
+      return code <= 0xFF ? code : 0x3F; // кириллица из UTF-8 мимо байта — не его случай
+    });
+  } catch {
+    return s;
+  }
+  let repaired: string;
+  try {
+    repaired = new TextDecoder("windows-1251").decode(bytes);
+  } catch {
+    return s;
+  }
+  const cyr = (repaired.match(/[\u0400-\u04FF]/g) ?? []).length;
+  const letters = (repaired.match(/[A-Za-z\u0400-\u04FF]/g) ?? []).length;
+  return letters > 0 && cyr / letters >= 0.6 ? repaired : s;
+}
+
 function text(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.replace(/\0/g, "").trim();
-  return trimmed === "" ? null : trimmed.slice(0, MAX_TEXT);
+  return trimmed === "" ? null : repairCyrillic(trimmed).slice(0, MAX_TEXT);
 }
 
 function joinList(value: unknown): string | null {

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { EMPTY_TAGS, normalizeTags, readTags, toColumns } from "./tags";
+import { EMPTY_TAGS, normalizeTags, readTags, repairCyrillic, toColumns } from "./tags";
 
 let dir = "";
 
@@ -239,5 +239,23 @@ describe("чтение настоящих файлов", () => {  test("теги
 
   test("не аудио не роняет загрузку", async () => {
     expect(await readTags(files.notAudio)).toEqual(EMPTY_TAGS);
+  });
+});
+
+describe("repairCyrillic", () => {
+  test("cp1251 mojibake починен", () => {
+    // «Ругань Из-За Стены», прочитанная парсером как latin-1.
+    const broken = "Ðóãàíü Èç-Çà Ñòåíû";
+    expect(repairCyrillic(broken)).toBe("Ругань Из-За Стены");
+  });
+
+  test("честный латинский заголовок с диакритикой не трогаем", () => {
+    expect(repairCyrillic("Motörhead")).toBe("Motörhead");
+    expect(repairCyrillic("Björk Guðmundsdóttir")).toBe("Björk Guðmundsdóttir");
+  });
+
+  test("нормальная кириллица (UTF-8) проходит как есть", () => {
+    const good = "Ругань Из-За Стены";
+    expect(repairCyrillic(good)).toBe(good);
   });
 });
