@@ -1,0 +1,84 @@
+# MusicLib — окружение и команды.
+#
+# mise ставит версии инструментов (сейчас только bun) и служит точкой входа
+# для всего остального: mise run install ставит systemd-юниты и плагин в оболочку,
+# mise run status показывает, что поднято. Разворачивание на новой машине —
+# это clone + mise trust + mise run install.
+#
+# Системные зависимости (ffmpeg, mpv, python3, zenity) через mise не ставятся —
+# их ставит пакетный менеджер, см. mise run doctor.
+
+[tools]
+bun = "1.4.3"
+
+[env]
+# Каталоги считаются от корня репозитория, а не от текущего каталога: иначе
+# запуск из подкаталога писал бы мимо storage/.
+MUSICLIB_STORAGE = "{{config_root}}/storage"
+MUSICLIB_DB = "{{config_root}}/storage/music.sqlite"
+
+[tasks.doctor]
+description = "Проверить, что на машине есть всё нужное"
+run = "scripts/doctor.sh"
+
+[tasks.install]
+description = "Поставить systemd-юниты и плагин в оболочку (sudo не нужен)"
+depends = ["doctor"]
+run = "scripts/install.sh"
+
+[tasks.uninstall]
+description = "Убрать юниты и плагин, поставившиеся скриптом install"
+run = "scripts/uninstall.sh"
+
+[tasks.start]
+description = "Запустить сервер и плеер"
+depends = ["install"]
+run = "systemctl --user enable --now music-lib.service music-lib-player.service && mise run status"
+
+[tasks.stop]
+description = "Остановить сервер и плеер"
+run = "systemctl --user disable --now music-lib.service music-lib-player.service"
+
+[tasks.restart]
+description = "Перезапустить сервер и плеер"
+run = "systemctl --user restart music-lib.service music-lib-player.service"
+
+[tasks.status]
+description = "Показать состояние сервисов и плеера на панели"
+run = """
+systemctl --user --no-pager --lines=0 status music-lib.service music-lib-player.service || true
+printf '\nMPRIS (что сейчас играет):\n'
+gdbus call --session --dest org.mpris.MediaPlayer2.musiclib \
+  --object-path /org/mpris/MediaPlayer2 \
+  --method org.freedesktop.DBus.Properties.Get org.mpris.MediaPlayer2.Player Metadata \
+  2>/dev/null | head -c 400 || printf 'мост не на шине\n'
+printf '\n'
+"""
+
+[tasks.logs]
+description = "Живой лог сервера и моста"
+run = "journalctl --user -u music-lib.service -u music-lib-player.service -f"
+
+[tasks.test]
+description = "Тесты"
+run = "bun test"
+
+[tasks.typecheck]
+description = "Проверка типов"
+run = "bun run typecheck"
+
+[tasks.ci]
+description = "Типы + тесты (то же, что гоняет CI)"
+run = "bun run ci"
+
+[tasks.dev]
+description = "Сервер вforeground с автоперезапуском"
+run = "bun run --watch src/index.ts"
+
+[tasks.migrate]
+description = "Применить миграции вручную (обычно не нужно: сервер делает это сам)"
+run = "bun run db:migrate"
+
+[tasks.pull-plugin]
+description = "Обновить плагин в оболочке из этого репозитория"
+run = "scripts/link-plugin.sh"

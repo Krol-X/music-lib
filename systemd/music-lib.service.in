@@ -4,8 +4,10 @@ Description=MusicLib server — личная аудиобиблиотека (Bun
 After=default.target
 
 [Service]
-WorkingDirectory=%h/Work/music-lib
-ExecStart=%h/.bun/bin/bun src/index.ts
+# Плейсхолдер __MUSICLIB_DIR__ подставляет scripts/install.sh: checkout может
+# лежать где угодно, и зашивать путь в репозиторий нельзя.
+WorkingDirectory=__MUSICLIB_DIR__
+ExecStart=__BUN_BIN__ src/index.ts
 # Локальный сервис для виджета: наружу не светим.
 Environment=MUSICLIB_HOST=127.0.0.1
 Environment=MUSICLIB_PORT=3000

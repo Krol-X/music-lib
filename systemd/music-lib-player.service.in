@@ -6,7 +6,8 @@ After=graphical-session.target music-lib.service
 # Только упорядочивание, не зависимость по жизни: рестарт сервера не тревожит плеер.
 
 [Service]
-ExecStart=%h/.bun/bin/bun %h/Work/music-lib/player/bridge.mjs
+# Плейсхолдеры подставляет scripts/install.sh (см. music-lib.service.in).
+ExecStart=__BUN_BIN__ __MUSICLIB_DIR__/player/bridge.mjs
 # Хост/порт дефолтные у бриджа (127.0.0.1:3000), переопределять не требуется.
 Restart=on-failure
 RestartSec=2

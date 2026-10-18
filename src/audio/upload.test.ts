@@ -6,7 +6,7 @@ import type { Knex } from "knex";
 import sharp from "sharp";
 import { createDb } from "../db/index.js";
 import { buildApp } from "../app";
-import { serviceTags } from "../../examples/inspect";
+import { serviceTags } from "./service-tags";
 
 let dir: string;
 let db: Knex;
@@ -209,7 +209,7 @@ describe("GET /cover/:id с ресайзом (sharp)", () => {
   });
 });
 
-describe("serviceTags в examples/inspect.ts", () => {
+describe("serviceTags в src/audio/service-tags.ts", () => {
   test("корректно извлекает MUSICLIB_ теги из native", () => {
     const meta = {
       native: {

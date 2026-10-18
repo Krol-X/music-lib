@@ -11,15 +11,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system dependencies (ffmpeg)
+      # ffmpeg обязателен: без него падают тесты пайплайна загрузки
+      - name: Install ffmpeg
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.3
+      # mise поднимает bun той же версии, что закреплена в mise.toml
+      - name: Install mise
+        uses: jdx/mise-action@v2
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
@@ -29,3 +29,19 @@ jobs:
 
       - name: Run tests
         run: bun test
+
+      # shellcheck ловит опечатки в скриптах установки: они выполняются
+      # один раз на новой машине, и ошибка там означает сломанную установку
+      - name: shellcheck
+        run: |
+          sudo apt-get install -y shellcheck
+          shellcheck scripts/*.sh
+
+      - name: Проверить, что шаблоны юнитов содержат плейсхолдеры
+        run: |
+          # install.sh подставляет их перед копированием в ~/.config. Если
+          # плейсхолдер потеряется, юнит запустится с путём "__MUSICLIB_DIR__".
+          for f in systemd/*.service.in; do
+            grep -q '__MUSICLIB_DIR__' "$f" || { echo "нет плейсхолдера в $f"; exit 1; }
+            grep -q '__BUN_BIN__' "$f" || { echo "нет __BUN_BIN__ в $f"; exit 1; }
+          done
