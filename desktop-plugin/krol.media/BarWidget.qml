@@ -949,6 +949,8 @@ BarWidget {
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.caption
             elide: Text.ElideRight
+            height: parent.height
+            verticalAlignment: Text.AlignVCenter
             width: parent.width - (root.uploadBusy ? cancelBtn.implicitWidth : 0)
               - (root.uploadFail > 0 && !root.uploadBusy ? clearFailedBtn.implicitWidth : 0)
               - (root.uploadItems.length > 0 && !root.uploadBusy ? clearAllBtn.implicitWidth : 0)
@@ -986,21 +988,21 @@ BarWidget {
           }
         }
 
-        // Тонкая полоска сводного прогресса очереди; снизу вольный
-        // отступ, чтобы не липла к списку файлов.
+        // Тонкая полоска сводного прогресса очереди: воздух сверху и снизу,
+        // чтобы не липла к шапке и к списку файлов.
         Item {
           width: parent.width
-          height: Style.space(11)
+          height: Style.space(15)
 
           Rectangle {
-            anchors { top: parent.top; left: parent.left; right: parent.right }
+            anchors { top: parent.top; left: parent.left; right: parent.right; topMargin: Style.space(4) }
             height: Style.space(5)
             radius: Style.space(2)
             color: Qt.rgba(root.bar.foreground.r, root.bar.foreground.g, root.bar.foreground.b, 0.15)
           }
 
           Rectangle {
-            anchors { top: parent.top; left: parent.left }
+            anchors { top: parent.top; left: parent.left; topMargin: Style.space(4) }
             width: parent.width * root.uploadFrac
             height: Style.space(5)
             radius: Style.space(2)
