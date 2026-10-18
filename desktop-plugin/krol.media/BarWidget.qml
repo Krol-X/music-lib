@@ -340,10 +340,14 @@ BarWidget {
     parser: SplitParser {
       splitMarker: "\n"
       onRead: function(data) {
+        console.log("плейлист: пуш прилетел:", String(data).slice(0, 60))
         if (!root.popupOpen || root.sortIndex !== 2 || root.sortMenuOpen) return
         try {
           const ev = JSON.parse(String(data))
-          if (ev && ev.event === "played") root.loadLibrary()
+          if (ev && ev.event === "played") {
+            console.log("плейлист: пуш 'played' получен")
+            root.loadLibrary()
+          }
         } catch (e) {
           // Мусорная строка не должна ронять подписку — игнорим.
           console.warn("плейлист: пуш не разобран:", e)
@@ -365,12 +369,15 @@ BarWidget {
     running: root.popupOpen && root.isOurPlayer && root.sortIndex === 2 && !root.sortMenuOpen
     onTriggered: root.loadLibrary()
   }
-  // Реконнект push-сокета: сервер мог рестартнуться — пробуем снова.
+  // Реконнект push-сокета: сервер мог рестартнуться (или файл-сокет
+  // пересоздавался чьим-то упавшим биндом) — пробуем каждые 5 секунд,
+  // пока сокет разъединён: пропущенная попытка не хоронит канал навсегда.
   Timer {
     id: reconnectTimer
-    interval: 3000
-    repeat: false
-    onTriggered: if (pushSock) pushSock.connected = true
+    interval: 5000
+    repeat: true
+    running: pushSock !== null && !pushSock.connected
+    onTriggered: pushSock.connected = true
   }
 
   // Quickshell не перетикает position сам: по докам заставляем его сигнал
@@ -836,9 +843,9 @@ BarWidget {
         visible: root.isOurPlayer && root.playlist.length > 0 && root.editingTrack === null
           && !root.sortMenuOpen
         width: parent.width
-        // Потолок списка задаёт высоту окна: 240 вместо 300 — компактней,
-        // с четырьмя строками-шапками всё ещё виден хороший кусок плейлиста.
-        height: Math.min(trackColumn.implicitHeight, Style.space(240))
+        // Потолок списка задаёт высоту окна: 196 px ≈ 5 строк (38px + 1px
+        // spacer каждая), окно компактнее на высоту одной строки.
+        height: Math.min(trackColumn.implicitHeight, Style.space(196))
         contentHeight: trackColumn.implicitHeight
         clip: true
         boundsBehavior: Flickable.StopAtBounds
