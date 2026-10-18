@@ -75,6 +75,10 @@ run = "bun run ci"
 description = "Сервер вforeground с автоперезапуском"
 run = "bun run --watch src/index.ts"
 
+[tasks.build]
+description = "Собрать сервер в один бинарник (прод-вариант без bun и node_modules)"
+run = "scripts/build.sh"
+
 [tasks.migrate]
 description = "Применить миграции вручную (обычно не нужно: сервер делает это сам)"
 run = "bun run db:migrate"

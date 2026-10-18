@@ -2,7 +2,26 @@ import { mkdir, rename, rm } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { dirname } from "node:path";
-import sharp from "sharp";
+/**
+ * sharp грузится ЛЕНИВО и с проглатыванием ошибки.
+ *
+ * sharp — нативный модуль (`.node`), и `bun build --compile` его в бинарник не
+ * встраивает: прод-сборка падала бы на старте с «Could not load the sharp
+ * module». При обычном запуске из исходников sharp есть в node_modules, при
+ * запуске бинарника — может отсутствовать, и тогда сервер поднимается, а
+ * превью обложек не делается (coverPreview отдаёт оригинал). Ставить sharp
+ * обязательным ради превью 64×64 — неоправданно.
+ *
+ * Результат кэшируем промисом: первый запрос грузит модуль, остальные берут
+ * готовое (в том числе null, если модуля нет — второй раз не пытаемся).
+ */
+let sharpModule: Promise<typeof import("sharp") | null> | null = null;
+function loadSharp(): Promise<typeof import("sharp") | null> {
+  if (!sharpModule) {
+    sharpModule = import("sharp").catch(() => null);
+  }
+  return sharpModule;
+}
 import { Elysia, status, t } from "elysia";
 import type { Knex } from "knex";
 import { errorResponse } from "./http";
@@ -247,26 +266,32 @@ async function coverPreview(
 
   const cachePath = `${tmpDir()}/cover-cache/${width}/${id}.jpg`;
   const cached = Bun.file(cachePath);
-  try {
-    if (!(await cached.exists())) {
+
+  // Оригинал как есть: и когда sharp не загрузился, и когда он не смог
+  // отмасштабировать (битый файл/неизвестный формат). Сервер из-за обложки
+  // падать не должен ни в одном из двух случаев.
+  const original = (): Response => new Response(withBody ? source : null, {
+    status: 200,
+    headers: {
+      "Content-Type": coverMime(extOf(coverPath)),
+      "Content-Length": String(source.size),
+      "Cache-Control": "private, max-age=3600",
+    },
+  });
+
+  if (!(await cached.exists())) {
+    const sharp = await loadSharp();
+    if (!sharp) return original();
+    try {
       await mkdir(dirname(cachePath), { recursive: true });
-      const resized = await sharp(coverPath)
+      const resized = await sharp.default(coverPath)
         .resize(width, width, { fit: "inside" })
         .jpeg({ quality: 75 })
         .toBuffer();
       await Bun.write(cachePath, resized);
+    } catch {
+      return original();
     }
-  } catch {
-    // Если sharp не смог отмасштабировать (битый файл/неизвестный формат),
-    // отдаём оригинальный файл как есть вместо падения сервера
-    return new Response(withBody ? source : null, {
-      status: 200,
-      headers: {
-        "Content-Type": coverMime(extOf(coverPath)),
-        "Content-Length": String(source.size),
-        "Cache-Control": "private, max-age=3600",
-      },
-    });
   }
 
   const preview = Bun.file(cachePath);
